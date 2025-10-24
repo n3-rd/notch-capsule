@@ -3,6 +3,30 @@ use window_vibrancy::apply_vibrancy;
 #[cfg(all(desktop, target_os = "macos"))]
 use tauri::Manager;
 
+#[cfg(target_os = "macos")]
+fn elevate_to_status_bar(win: &tauri::WebviewWindow) -> tauri::Result<()> {
+  use core::ffi::c_void;
+  use objc2::runtime::AnyObject;
+  use objc2_app_kit::{NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
+
+  let raw: *mut c_void = win.ns_window()?;
+  if raw.is_null() {
+    return Err(tauri::Error::InvalidWindowHandle);
+  }
+
+  let obj: *mut AnyObject = raw.cast();
+  let ns_win: &NSWindow = unsafe { &*(obj.cast()) };
+
+  ns_win.setLevel(NSStatusWindowLevel);
+
+  let behavior = NSWindowCollectionBehavior::CanJoinAllSpaces
+    | NSWindowCollectionBehavior::FullScreenAuxiliary
+    | NSWindowCollectionBehavior::IgnoresCycle;
+  ns_win.setCollectionBehavior(behavior);
+
+  Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -16,7 +40,7 @@ pub fn run() {
       }
       #[cfg(desktop)]
       {
-        app.handle().plugin(tauri_plugin_positioner::init());
+        app.handle().plugin(tauri_plugin_positioner::init())?;
 
         tauri::tray::TrayIconBuilder::new()
           .on_tray_icon_event(|tray, evt| {
@@ -26,10 +50,10 @@ pub fn run() {
       }
       #[cfg(all(desktop, target_os = "macos"))]
       {
-        if let Some(win) = app.get_webview_window("notch") {
-          // Apply macOS vibrancy to the notch window
+        if let Some(win) = app.get_webview_window("notch-capsule") {
+          elevate_to_status_bar(&win)?;
           let _ = apply_vibrancy(
-            win,
+            &win,
             window_vibrancy::NSVisualEffectMaterial::HudWindow,
             None,
             None,

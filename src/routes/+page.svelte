@@ -6,7 +6,7 @@
   
     onMount(async () => {
       // access the predeclared 'notch' window
-      const win = (await TauriWindow.getByLabel('notch')) ?? getCurrentWindow();
+      const win = (await TauriWindow.getByLabel('notch-capsule')) ?? getCurrentWindow();
   
       // hug the top-center (works across displays)
       await moveWindow(Position.TopCenter);
