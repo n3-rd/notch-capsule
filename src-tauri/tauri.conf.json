@@ -20,8 +20,8 @@
         "visible": true,
         "resizable": false,
         "focus": false,
-        "width": 320,
-        "height": 34,
+        "width": 200,
+        "height": 32,
         "visibleOnAllWorkspaces": true
       }
     ],

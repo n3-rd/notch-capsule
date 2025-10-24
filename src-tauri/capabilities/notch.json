@@ -5,7 +5,9 @@
     "windows": ["notch-capsule"],
     "permissions": [
       "core:default",
-      "positioner:default"
+      "positioner:default",
+      "core:window:allow-set-position",
+      "core:window:allow-set-size"
     ]
   }
   

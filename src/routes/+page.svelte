@@ -1,40 +1,132 @@
-<!-- src/routes/+page.svelte -->
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { getCurrentWindow, Window as TauriWindow } from '@tauri-apps/api/window';
+    import {
+      getCurrentWindow,
+      Window as TauriWindow,
+      LogicalSize,
+      LogicalPosition,
+    } from '@tauri-apps/api/window';
     import { moveWindow, Position } from '@tauri-apps/plugin-positioner';
+    import { invoke } from '@tauri-apps/api/core';
+  
+    type NotchDimensions = {
+      width_pts: number;
+      top_inset_pts: number;
+      width_px: number;
+      top_inset_px: number;
+      scale: number;
+    };
+  
+    let notchWidth = 320;   // fallback
+    let notchHeight = 34;
   
     onMount(async () => {
-      // access the predeclared 'notch' window
       const win = (await TauriWindow.getByLabel('notch-capsule')) ?? getCurrentWindow();
   
-      // hug the top-center (works across displays)
+      let dims: NotchDimensions | null = null;
+      try { dims = (await invoke('get_notch_dimensions')) as NotchDimensions | null; } catch {}
+  
+      if (dims && dims.width_pts > 0 && dims.top_inset_pts > 0) {
+        notchWidth  = Math.round(dims.width_pts);
+        notchHeight = Math.max(28, Math.round(dims.top_inset_pts));
+      }
+  
+      await win.setSize(new LogicalSize(notchWidth, notchHeight));
       await moveWindow(Position.TopCenter);
-  
-      // nudge it down a few pixels to avoid overlapping the menubar baseline
-      const pos = await win.outerPosition();
-      await win.setPosition({ x: pos.x, y: pos.y + 6 });
-  
-      // make it click-through if you just want a decorative overlay
-      await getCurrentWindow().setIgnoreCursorEvents(true);
+      // const pos = await win.outerPosition();
+      // await win.setPosition(new LogicalPosition(pos.x + 2, pos.y + 4));
+      // await win.setIgnoreCursorEvents(true); // optional pass-through
     });
   </script>
   
-  <div class="capsule">
-    <!-- put tiny status icons, media info, clock, etc. here -->
-    <span class="dot"></span>
-    <span class="label">Notch Capsule</span>
+  <!-- Window content -->
+  <div class="capsule rounded-tab bg-black" style="width:{notchWidth}px; height:{notchHeight}px;">
+    <span class="label no-drag">Notch Capsule</span>
   </div>
   
   <style>
-    :global(html, body) { background: transparent; }
-    .capsule {
-      height: 34px; width: 320px;
-      border-radius: 17px;
-      backdrop-filter: saturate(180%) blur(20px);
-      -webkit-backdrop-filter: saturate(180%) blur(20px);
-      display: flex; align-items: center; justify-content: center;
+    :global(html, body) {
+      background: transparent;           /* transparent Tauri window */
     }
-    .dot { width: 8px; height: 8px; border-radius: 9999px; margin-right: .5rem; }
+  
+    /* Make the whole window draggable (great for a tiny notch window) */
+    .capsule {
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 2px;
+    }
+    .no-drag { -webkit-app-region: no-drag; }
+  
+    /* === Notch styling for your .rounded-tab container === */
+    .rounded-tab {
+      /* Tunables (derived from your logical size) */
+      --notch-radius: 18px;     /* main corner radius */
+      --ear-size: 18px;         /* size of outer “ears” */
+      --bg: #000000;            /* notch fill */
+      --edge: #0009;            /* subtle border edge */
+      /* --shadow: 0 2px 12px #0008, 0 2px 6px #0005; */
+  
+      position: relative;
+      box-sizing: border-box;
+      background: var(--bg);
+      border: 1px solid var(--edge);
+      box-shadow: var(--shadow);
+  
+      /* Elliptical radii to mimic macOS notch curvature */
+      border-radius:
+        var(--notch-radius) var(--notch-radius) calc(var(--notch-radius) * 1.9) calc(var(--notch-radius) * 1.9)
+        / var(--notch-radius) var(--notch-radius) calc(var(--notch-radius) * 2.6) calc(var(--notch-radius) * 2.6);
+  
+      overflow: visible;
+      padding: 0 10px;
+    }
+  
+    /* “Ears” that soften the outer top corners (looks closer to real notch) */
+
+    .rounded-tab::after {
+      content: "";
+      position: absolute;
+      top: -1px; /* align with border */
+      width: var(--ear-size);
+      height: var(--ear-size);
+      background: var(--bg);
+      border-top: 1px solid var(--edge);
+    }
+    .rounded-tab::before {
+      left: calc(-1 * var(--ear-size));
+      border-radius: var(--ear-size) 0 0 0;
+      box-shadow: -1px 0 0 0 var(--edge);
+    }
+    .rounded-tab::after {
+      right: calc(-1 * var(--ear-size));
+      border-radius: 0 var(--ear-size) 0 0;
+      box-shadow: 1px 0 0 0 var(--edge);
+    }
+  
+    /* Label/text inside */
+    .rounded-tab .label {
+      font: 500 11px/1.1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: #e5e5e5;
+      user-select: none;
+      pointer-events: none;
+      opacity: 0.9;
+    }
+  
+    /* Optional: Glassy “liquid” look—toggle the class on .rounded-tab if you like */
+    /* .rounded-tab.glass {
+      background: rgba(18, 18, 18, 0.6);
+      border-color: rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(10px) saturate(120%);
+    } */
+  
+    /* Optional: Light-mode variant */
+    /* .rounded-tab.light {
+      --bg: #ffffff;
+      --edge: #00000020;
+      --shadow: 0 2px 12px #0002, 0 2px 6px #0001;
+      color: #222;
+    } */
   </style>
   
