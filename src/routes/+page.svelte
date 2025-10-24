@@ -8,6 +8,7 @@
     } from '@tauri-apps/api/window';
     import { moveWindow, Position } from '@tauri-apps/plugin-positioner';
     import { invoke } from '@tauri-apps/api/core';
+	import NotchExpanded from '$lib/notch-expanded.svelte';
   
     type NotchDimensions = {
       width_pts: number;
@@ -17,20 +18,44 @@
       scale: number;
     };
   
-    let notchWidth = 320;   // fallback
-    let notchHeight = 34;
-  
+    let notchWidth = $state(320);   // fallback
+    let notchHeight = $state(34);
+    let notchExpanded = $state(false)
+    let windowInstance: TauriWindow | null = null;
+
+    async function resizeWindow(expanded: boolean) {
+      if (!windowInstance) return;
+
+      if (expanded) {
+        // Make window resizable and expand it
+        await windowInstance.setResizable(true);
+        // Set expanded size (24rem = 384px, h-80 = 320px)
+        const expandedWidth = 384;
+        const expandedHeight = 320;
+        await windowInstance.setSize(new LogicalSize(expandedWidth, expandedHeight));
+
+        // Reposition to center the expanded content at top
+        await moveWindow(Position.TopCenter);
+      } else {
+        // Return to capsule size and position
+        await windowInstance.setSize(new LogicalSize(notchWidth, notchHeight));
+        await moveWindow(Position.TopCenter);
+        await windowInstance.setResizable(false);
+      }
+    }
+
     onMount(async () => {
       const win = (await TauriWindow.getByLabel('notch-capsule')) ?? getCurrentWindow();
-  
+      windowInstance = win;
+
       let dims: NotchDimensions | null = null;
       try { dims = (await invoke('get_notch_dimensions')) as NotchDimensions | null; } catch {}
-  
+
       if (dims && dims.width_pts > 0 && dims.top_inset_pts > 0) {
         notchWidth  = Math.round(dims.width_pts);
         notchHeight = Math.max(28, Math.round(dims.top_inset_pts));
       }
-  
+
       await win.setSize(new LogicalSize(notchWidth, notchHeight));
       await moveWindow(Position.TopCenter);
       // const pos = await win.outerPosition();
@@ -38,12 +63,22 @@
       // await win.setIgnoreCursorEvents(true); // optional pass-through
     });
   </script>
+  <div class="drag-strip"></div>
+
+{#if notchExpanded}
+<NotchExpanded/>
+{/if}
   
   <!-- Window content -->
-  <div class="capsule rounded-tab bg-black" style="width:{notchWidth}px; height:{notchHeight}px;">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="capsule rounded-tab bg-black" style="width:{notchWidth}px; height:{notchHeight}px;"
+  onmouseenter={async () => { notchExpanded = true; await resizeWindow(true); }}
+  onmouseleave={async () => { notchExpanded = false; await resizeWindow(false); }}
+  >
     <span class="label no-drag">Notch Capsule</span>
   </div>
-  
+
+
   <style>
     :global(html, body) {
       background: transparent;           /* transparent Tauri window */
@@ -51,13 +86,15 @@
   
     /* Make the whole window draggable (great for a tiny notch window) */
     .capsule {
-      -webkit-app-region: drag;
       display: flex;
       align-items: center;
       justify-content: center;
       margin-left: 2px;
+      -webkit-app-region: no-drag; 
     }
     .no-drag { -webkit-app-region: no-drag; }
+
+    
   
     /* === Notch styling for your .rounded-tab container === */
     .rounded-tab {

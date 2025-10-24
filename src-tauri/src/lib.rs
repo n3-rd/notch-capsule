@@ -5,6 +5,7 @@ use window_vibrancy::apply_vibrancy;
 #[cfg(all(desktop, target_os = "macos"))]
 use tauri::Manager;
 
+
 // ---------- Notch metrics (accurate; macOS 12+) ----------
 #[cfg(target_os = "macos")]
 #[derive(serde::Serialize)]
@@ -67,7 +68,6 @@ fn get_notch_dimensions(window: tauri::Window) -> Option<NotchDimensions> {
   })
 }
 
-// ---------- Elevate to status-bar level (sit ON the menu bar) ----------
 #[cfg(target_os = "macos")]
 fn elevate_to_status_bar(win: &tauri::WebviewWindow) -> tauri::Result<()> {
   use core::ffi::c_void;
@@ -75,24 +75,28 @@ fn elevate_to_status_bar(win: &tauri::WebviewWindow) -> tauri::Result<()> {
   use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior, NSStatusWindowLevel};
 
   let raw: *mut c_void = win.ns_window()?;
-  if raw.is_null() {
-    return Err(tauri::Error::InvalidWindowHandle);
-  }
+  if raw.is_null() { return Err(tauri::Error::InvalidWindowHandle); }
   let obj: *mut AnyObject = raw.cast();
   let ns_win: &NSWindow = unsafe { &*(obj as *mut NSWindow) };
 
   unsafe {
-    // Menu bar / status level (above ordinary “always on top”)
+    // Ride above menu bar & behave nicely across Spaces/fullscreen
     ns_win.setLevel(NSStatusWindowLevel);
-    // Show across Spaces and coexist with full-screen apps as auxiliary
-    let behavior =
+    ns_win.setCollectionBehavior(
       NSWindowCollectionBehavior::CanJoinAllSpaces
-        | NSWindowCollectionBehavior::FullScreenAuxiliary
-        | NSWindowCollectionBehavior::IgnoresCycle;
-    ns_win.setCollectionBehavior(behavior);
+      | NSWindowCollectionBehavior::FullScreenAuxiliary
+      | NSWindowCollectionBehavior::IgnoresCycle,
+    );
+
+    // 💡 Critical for hover when inactive
+    ns_win.setAcceptsMouseMovedEvents(true);   // opt-in for mouse moved/enter/leave
+    ns_win.setIgnoresMouseEvents(false);       // ensure we don't ignore events
   }
   Ok(())
 }
+
+
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
