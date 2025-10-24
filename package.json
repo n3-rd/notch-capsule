@@ -38,6 +38,7 @@
 		"vite": "^7.1.7"
 	},
 	"dependencies": {
-		"@tauri-apps/api": "^2.9.0"
+		"@tauri-apps/api": "^2.9.0",
+		"@tauri-apps/plugin-positioner": "^2.3.0"
 	}
 }
