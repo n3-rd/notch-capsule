@@ -1,14 +1,14 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
-    import {
-      getCurrentWindow,
-      Window as TauriWindow,
-      LogicalSize,
-      LogicalPosition,
-    } from '@tauri-apps/api/window';
-    import { moveWindow, Position } from '@tauri-apps/plugin-positioner';
-    import { invoke } from '@tauri-apps/api/core';
-	import NotchExpanded from '$lib/notch-expanded.svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import {
+    getCurrentWindow,
+    Window as TauriWindow,
+    LogicalSize,
+  } from '@tauri-apps/api/window';
+  import { moveWindow, Position } from '@tauri-apps/plugin-positioner';
+  import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
+  import NotchExpanded from '$lib/notch-expanded.svelte';
   
     type NotchDimensions = {
       width_pts: number;
@@ -44,24 +44,32 @@
       }
     }
 
-    onMount(async () => {
-      const win = (await TauriWindow.getByLabel('notch-capsule')) ?? getCurrentWindow();
-      windowInstance = win;
+  let unlisten: (() => void) | null = null;
 
-      let dims: NotchDimensions | null = null;
-      try { dims = (await invoke('get_notch_dimensions')) as NotchDimensions | null; } catch {}
+  onMount(async () => {
+    const win = (await TauriWindow.getByLabel('notch-capsule')) ?? getCurrentWindow();
+    windowInstance = win;
 
-      if (dims && dims.width_pts > 0 && dims.top_inset_pts > 0) {
-        notchWidth  = Math.round(dims.width_pts);
-        notchHeight = Math.max(28, Math.round(dims.top_inset_pts));
-      }
+    // Note: Mouse events don't require Accessibility permission (only key events do)
 
-      await win.setSize(new LogicalSize(notchWidth, notchHeight));
-      await moveWindow(Position.TopCenter);
-      // const pos = await win.outerPosition();
-      // await win.setPosition(new LogicalPosition(pos.x + 2, pos.y + 4));
-      // await win.setIgnoreCursorEvents(true); // optional pass-through
+    // Dimensions
+    let dims: NotchDimensions | null = null;
+    try { dims = await invoke('get_notch_dimensions') as NotchDimensions | null; } catch {}
+    if (dims && dims.width_pts > 0 && dims.top_inset_pts > 0) {
+      notchWidth  = Math.round(dims.width_pts);
+      notchHeight = Math.max(28, Math.round(dims.top_inset_pts));
+    }
+    await win.setSize(new LogicalSize(notchWidth, notchHeight));
+    await moveWindow(Position.TopCenter);
+
+    // Listen for native hover (works even when window not focused)
+    unlisten = await listen<{ inside: boolean }>('notch-hover', ({ payload }) => {
+      notchExpanded = !!payload?.inside;
+      resizeWindow(notchExpanded);
     });
+  });
+
+  onDestroy(() => { if (unlisten) unlisten(); });
   </script>
   <div class="drag-strip"></div>
 
@@ -71,9 +79,9 @@
   
   <!-- Window content -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="capsule rounded-tab bg-black" style="width:{notchWidth}px; height:{notchHeight}px;"
-  onmouseenter={async () => { notchExpanded = true; await resizeWindow(true); }}
-  onmouseleave={async () => { notchExpanded = false; await resizeWindow(false); }}
+  <div
+    class="capsule rounded-tab bg-black"
+    style="width:{notchWidth}px; height:{notchHeight}px;"
   >
     <span class="label no-drag">Notch Capsule</span>
   </div>
@@ -90,7 +98,11 @@
       align-items: center;
       justify-content: center;
       margin-left: 2px;
-      -webkit-app-region: no-drag; 
+      -webkit-app-region: no-drag; /* critical: hover target should NOT be draggable */
+    }
+    .drag-strip {
+      position: fixed; top: -6px; left: 0; width: 100%; height: 8px;
+      -webkit-app-region: drag; pointer-events: auto;
     }
     .no-drag { -webkit-app-region: no-drag; }
 
