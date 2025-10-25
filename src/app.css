@@ -12,3 +12,7 @@
   -webkit-app-region: drag;
   pointer-events: auto;
 }
+
+body{
+  border: none!important;
+}

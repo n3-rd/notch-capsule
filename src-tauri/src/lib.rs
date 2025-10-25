@@ -1,24 +1,28 @@
 // macOS-only imports
 #[cfg(target_os = "macos")]
 #[allow(unused_imports)]
-use window_vibrancy::apply_vibrancy;
+
 
 #[cfg(all(desktop, target_os = "macos"))]
 use tauri::Manager;
 
-use objc2_foundation::MainThreadMarker;
-use tauri::Emitter; // <-- needed for AppHandle.emit(...) // for NSScreen::screens(mtm)
-                    // add near the top
 use block2::{Block, RcBlock};
 use objc2_app_kit::{NSEvent, NSEventMask, NSScreen};
+use objc2_foundation::MainThreadMarker; // for NSScreen::screens(mtm)
 use objc2_foundation::NSPoint;
 #[cfg(target_os = "macos")]
 use std::{
     ptr::NonNull,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
+use tauri::Emitter; // needed for AppHandle.emit(...)
+#[cfg(target_os = "macos")]
+use tauri::State;
 
 // ---------- Notch metrics (accurate; macOS 12+) ----------
 #[cfg(target_os = "macos")]
@@ -29,6 +33,20 @@ struct NotchDimensions {
     width_px: f64,
     top_inset_px: f64,
     scale: f64,
+}
+
+#[cfg(target_os = "macos")]
+struct HoverState {
+    expanded: Arc<AtomicBool>,
+}
+
+#[cfg(target_os = "macos")]
+impl Default for HoverState {
+    fn default() -> Self {
+        Self {
+            expanded: Arc::new(AtomicBool::new(false)),
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -153,6 +171,16 @@ fn ensure_accessibility(prompt: bool) -> bool {
 }
 
 #[cfg(target_os = "macos")]
+#[tauri::command]
+fn set_notch_expanded(expanded: bool, state: State<HoverState>) {
+    state.expanded.store(expanded, Ordering::Relaxed);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn set_notch_expanded(_expanded: bool) {}
+
+#[cfg(target_os = "macos")]
 fn handle_mouse_move<F>(
     st: &Arc<Mutex<(bool, Instant)>>,
     app_handle: &tauri::AppHandle,
@@ -190,12 +218,13 @@ fn handle_mouse_move<F>(
 }
 
 #[cfg(target_os = "macos")]
-fn start_hover_monitors(app: &tauri::AppHandle) {
+fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) {
     // --- shared debounce state ---
     let st = Arc::new(Mutex::new((false, Instant::now())));
 
     // Helper: top-center hover zone on the screen where the mouse is
-    let hover_zone = Arc::new(|mouse: NSPoint| -> Option<(f64, f64, f64, f64)> {
+    let expanded_flag_for_zone = expanded_flag.clone();
+    let hover_zone = Arc::new(move |mouse: NSPoint| -> Option<(f64, f64, f64, f64)> {
         let mtm = MainThreadMarker::new()?;
         let screens = NSScreen::screens(mtm);
         let mut frame = None;
@@ -213,8 +242,12 @@ fn start_hover_monitors(app: &tauri::AppHandle) {
         }
         let f = frame?;
         // tune these to your capsule size
-        let zone_w = 320.0;
-        let zone_h = 40.0;
+        let expanded = expanded_flag_for_zone.load(Ordering::Relaxed);
+        let (zone_w, zone_h) = if expanded {
+            (700.0, 220.0)
+        } else {
+            (320.0, 40.0)
+        };
         let x = f.origin.x + (f.size.width - zone_w) * 0.5;
         let y = f.origin.y + f.size.height - zone_h;
         Some((x, y, zone_w, zone_h))
@@ -268,7 +301,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_notch_dimensions,
-            ensure_accessibility
+            ensure_accessibility,
+            set_notch_expanded
         ])
         .setup(|app| {
             #[cfg(desktop)]
@@ -280,8 +314,10 @@ pub fn run() {
                 if let Some(win) = app.get_webview_window("notch-capsule") {
                     elevate_to_status_bar(&win)?;
                 }
+                app.manage(HoverState::default());
                 let handle = app.handle();
-                start_hover_monitors(&handle);
+                let expanded_flag = app.state::<HoverState>().expanded.clone();
+                start_hover_monitors(&handle, expanded_flag);
             }
             Ok(())
         })
