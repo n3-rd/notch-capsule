@@ -24,7 +24,7 @@
     }
     
     // Set initial state explicitly
-    node.style.transform = 'scale(0.88) translate3d(0, -4px, 0)';
+
     node.style.opacity = '0';
 
     // Small delay to ensure styles are applied
@@ -492,7 +492,8 @@
       height: 100%;
       display: flex;
       pointer-events: auto;
-      padding: 2.25rem 2.5rem 2rem;
+      padding: 2rem 2.8rem 2rem;
+      padding-bottom: 0;
       background: #000;
       border: none !important;
       transform-origin: top center;

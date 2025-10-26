@@ -38,7 +38,7 @@
         class:active={$activeTab === pill.id}
         onclick={() => selectTab(pill.id)}
       >
-        <svelte:component this={pill.icon} size={22} />
+        <svelte:component this={pill.icon} size={18} />
       </button>
     {/each}
   </div>
@@ -48,7 +48,7 @@
       class:active={$activeTab === pill.id}
       onclick={() => selectTab(pill.id)}
     >
-      <svelte:component this={pill.icon} size={22} />
+      <svelte:component this={pill.icon} size={18} />
     </button>
   {/each}
 </div>

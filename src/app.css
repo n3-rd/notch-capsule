@@ -16,3 +16,7 @@
 body{
   border: none!important;
 }
+
+.view-container{
+  padding: 12px;
+}
