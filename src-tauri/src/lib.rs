@@ -244,7 +244,7 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
         // tune these to your capsule size
         let expanded = expanded_flag_for_zone.load(Ordering::Relaxed);
         let (zone_w, zone_h) = if expanded {
-            (700.0, 220.0)
+            (700.0, 200.0)
         } else {
             (320.0, 40.0)
         };

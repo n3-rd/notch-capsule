@@ -26,7 +26,6 @@
     // Set initial state explicitly
     node.style.transform = 'scale(0.88) translate3d(0, -4px, 0)';
     node.style.opacity = '0';
-    node.style.filter = 'blur(8px)';
 
     // Small delay to ensure styles are applied
     requestAnimationFrame(() => {
@@ -492,17 +491,12 @@
       width: 100%;
       height: 100%;
       display: flex;
-      align-items: center;
-      justify-content: center;
       pointer-events: auto;
       padding: 2.25rem 2.5rem 2rem;
       background: #000;
       border: none !important;
       transform-origin: top center;
       overflow: hidden;
-      box-shadow:
-        0 28px 90px -40px rgba(0, 0, 0, 0.85),
-        0 16px 48px -28px rgba(0, 0, 0, 0.55);
       -webkit-mask-image: var(--notch-mask);
       mask-image: var(--notch-mask);
       -webkit-mask-repeat: no-repeat;
@@ -528,10 +522,6 @@
     }
 
     .expanded-wrapper:hover {
-      background: rgba(12, 12, 12, 0.92);
-      box-shadow:
-        0 36px 120px -36px rgba(0, 0, 0, 0.92),
-        0 18px 52px -28px rgba(0, 0, 0, 0.65);
       transition: background-color 180ms ease-out, box-shadow 180ms ease-out;
     }
     
@@ -547,9 +537,6 @@
       background: #000;
       color: #f5f5f5;
       overflow: hidden;
-      box-shadow:
-        0 12px 32px rgba(0, 0, 0, 0.28),
-        0 4px 12px rgba(0, 0, 0, 0.22);
       -webkit-mask-image: var(--notch-mask);
       mask-image: var(--notch-mask);
       -webkit-mask-repeat: no-repeat;
