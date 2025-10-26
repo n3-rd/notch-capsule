@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { fade, scale } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { animate, type JSAnimation } from 'animejs';
   import {
     getCurrentWindow,
     Window as TauriWindow,
@@ -12,6 +11,127 @@
   import { listen } from '@tauri-apps/api/event';
   import NotchExpanded from '$lib/notch-expanded.svelte';
 	import { notchExpandedHeight, notchExpandedWidth, DEV_KEEP_NOTCH_EXPANDED } from '$lib';
+
+  // Ultra-smooth Anime.js animations with spring physics
+  let expandedAnime: JSAnimation | null = null;
+  let capsuleAnime: JSAnimation | null = null;
+  let capsuleHoverAnime: JSAnimation | null = null;
+
+  function animateExpandIn(node: HTMLElement) {
+    if (expandedAnime) {
+      expandedAnime.pause();
+      expandedAnime = null;
+    }
+    
+    // Set initial state explicitly
+    node.style.transform = 'scale(0.88) translate3d(0, -4px, 0)';
+    node.style.opacity = '0';
+    node.style.filter = 'blur(8px)';
+
+    // Small delay to ensure styles are applied
+    requestAnimationFrame(() => {
+      expandedAnime = animate(node, {
+        scale: [0.88, 1],
+        translateY: ['-4px', '0px'],
+        opacity: [0, 1],
+        blur: ['8px', '0px'],
+        duration: 320,
+        ease: 'spring(1, 70, 8, 0)',
+        composition: 'replace',
+      });
+    });
+  }
+
+  function animateExpandOut(node: HTMLElement) {
+    if (expandedAnime) {
+      expandedAnime.pause();
+      expandedAnime = null;
+    }
+    
+    requestAnimationFrame(() => {
+      const currentOpacity = parseFloat(window.getComputedStyle(node).opacity) || 1;
+      
+      expandedAnime = animate(node, {
+        scale: [1, 0.88],
+        translateY: ['0px', '-8px'],
+        opacity: [currentOpacity, 0],
+        blur: ['0px', '10px'],
+        duration: 260,
+        delay: 50,
+        ease: 'in(3)',
+        composition: 'replace',
+      });
+    });
+  }
+
+  function animateCapsuleIn(node: HTMLElement) {
+    if (capsuleAnime) {
+      capsuleAnime.pause();
+      capsuleAnime = null;
+    }
+    
+    // Set initial state
+    node.style.opacity = '0';
+    node.style.transform = 'scale(0.94) translate3d(0, 0, 0)';
+
+    requestAnimationFrame(() => {
+      capsuleAnime = animate(node, {
+        opacity: [0, 1],
+        scale: [0.94, 1],
+        duration: 160,
+        delay: 310,
+        ease: 'out(4)',
+        composition: 'replace',
+      });
+    });
+  }
+
+  function animateCapsuleOut(node: HTMLElement) {
+    if (capsuleAnime) {
+      capsuleAnime.pause();
+      capsuleAnime = null;
+    }
+    
+    requestAnimationFrame(() => {
+      const currentOpacity = parseFloat(window.getComputedStyle(node).opacity) || 1;
+      
+      capsuleAnime = animate(node, {
+        opacity: [currentOpacity, 0],
+        scale: [1, 1.02],
+        duration: 80,
+        ease: 'inOut(2)',
+        composition: 'replace',
+      });
+    });
+  }
+
+  function animateCapsuleHoverIn(node: HTMLElement) {
+    if (capsuleHoverAnime) {
+      capsuleHoverAnime.pause();
+      capsuleHoverAnime = null;
+    }
+    
+    capsuleHoverAnime = animate(node, {
+      scale: [1, 1.04],
+      duration: 200,
+      ease: 'out(3)',
+      composition: 'blend',
+    });
+  }
+
+  function animateCapsuleHoverOut(node: HTMLElement) {
+    if (capsuleHoverAnime) {
+      capsuleHoverAnime.pause();
+      capsuleHoverAnime = null;
+    }
+    
+    capsuleHoverAnime = animate(node, {
+      scale: [1.04, 1],
+      duration: 300,
+      ease: 'out(4)',
+      composition: 'blend',
+    });
+  }
   
     type NotchDimensions = {
       width_pts: number;
@@ -26,10 +146,23 @@
     let notchExpanded = $state(false)
     let manualHold = $state(false);
     let pointerInExpanded = $state(false);
-    let showBouncyAnimation = $state(false);
-    let expandedEl: HTMLDivElement | null = null;
+    let expandedEl = $state<HTMLDivElement | null>(null);
+    let capsuleEl = $state<HTMLDivElement | null>(null);
     let windowInstance: TauriWindow | null = null;
     let cancelWindowResize: (() => void) | null = null;
+
+    // Trigger animations when notchExpanded changes
+    $effect(() => {
+      if (notchExpanded && expandedEl) {
+        animateExpandIn(expandedEl);
+      }
+    });
+
+    $effect(() => {
+      if (!notchExpanded && capsuleEl) {
+        animateCapsuleIn(capsuleEl);
+      }
+    });
 
     const EXPANDED_WIDTH = notchExpandedWidth;
     const EXPANDED_HEIGHT = notchExpandedHeight;
@@ -42,6 +175,13 @@
       const inv = 1 - t;
       return 1 - inv * inv * inv;
     };
+
+    const round = (value: number) => Math.round(value * 100) / 100;
+    const toPx = (value: number) => `${round(value)}px`;
+    // More pronounced notch ears with extended top curves
+    const notchPathD = 'M120 4C120 1.79086 121.791 0 124 0H127V0H0V0H3C5.20914 0 7 1.79086 7 4V14C7 17.3137 9.68629 20 13 20H114C117.314 20 120 17.3137 120 14V4Z';
+    const notchMaskSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 127 20" preserveAspectRatio="none"><path d="${notchPathD}" fill="white"/></svg>`;
+    const notchMaskUri = `url("data:image/svg+xml,${encodeURIComponent(notchMaskSvg)}")`;
 
     async function animateWindowSize(targetWidth: number, targetHeight: number, duration = 280) {
       if (!windowInstance) return;
@@ -144,23 +284,29 @@
   function openNotch() {
     if (!notchExpanded) {
       notchExpanded = true;
-      showBouncyAnimation = true;
       resizeWindow(true);
       syncNativeExpanded(true);
-      
-      // Remove bouncy animation class after animation completes
-      setTimeout(() => {
-        showBouncyAnimation = false;
-      }, 250); // Match --dur-fast duration
     }
   }
 
   function closeNotch() {
     if (notchExpanded && !DEV_KEEP_NOTCH_EXPANDED) {
-      notchExpanded = false;
-      pointerInExpanded = false;
-      resizeWindow(false);
-      syncNativeExpanded(false);
+      // Trigger exit animation first
+      if (expandedEl) {
+        animateExpandOut(expandedEl);
+      }
+      
+      // Delay state change to allow animation to complete (delay 50ms + duration 260ms = 310ms)
+      setTimeout(() => {
+        notchExpanded = false;
+        pointerInExpanded = false;
+      }, 330);
+      
+      // Resize window slightly later
+      setTimeout(() => {
+        resizeWindow(false);
+        syncNativeExpanded(false);
+      }, 350);
     }
   }
 
@@ -216,6 +362,21 @@
       cancelWindowResize();
       cancelWindowResize = null;
     }
+    
+    // Cleanup animations
+    if (expandedAnime) {
+      expandedAnime.pause();
+      expandedAnime = null;
+    }
+    if (capsuleAnime) {
+      capsuleAnime.pause();
+      capsuleAnime = null;
+    }
+    if (capsuleHoverAnime) {
+      capsuleHoverAnime.pause();
+      capsuleHoverAnime = null;
+    }
+    
     if (!DEV_KEEP_NOTCH_EXPANDED) {
       syncNativeExpanded(false);
     }
@@ -227,17 +388,14 @@
     {#if notchExpanded}
       <div
         class="expanded-wrapper"
-        class:animate-bouncy-open={showBouncyAnimation}
         bind:this={expandedEl}
-       
-        in:scale={{ duration: 250, easing: cubicOut, start: 0.88 }}
-        out:scale={{ duration: 250, easing: cubicOut, start: 0.96, delay: 100 }}
-        on:mouseenter={() => {
+        style={`--notch-mask:${notchMaskUri};`}
+        onmouseenter={() => {
           manualHold = true;
           pointerInExpanded = true;
           openNotch();
         }}
-        on:mouseleave={() => {
+        onmouseleave={() => {
           manualHold = false;
           pointerInExpanded = false;
           closeNotch();
@@ -248,10 +406,22 @@
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="capsule rounded-tab bg-black"
-        style="width:{notchWidth}px; height:{notchHeight}px;"
-        in:fade={{ duration: 100 }}
-        out:fade={{ duration: 80 }}
+        class="capsule rounded-tab"
+        bind:this={capsuleEl}
+        style={`width:${toPx(notchWidth)}; height:${toPx(notchHeight)}; --notch-mask:${notchMaskUri};`}
+        onpointerenter={(e) => {
+          manualHold = true;
+          if (capsuleEl) animateCapsuleHoverIn(capsuleEl);
+          openNotch();
+        }}
+        onpointerleave={() => {
+          manualHold = false;
+          pointerInExpanded = false;
+          if (capsuleEl) animateCapsuleHoverOut(capsuleEl);
+          if (!DEV_KEEP_NOTCH_EXPANDED) {
+            closeNotch();
+          }
+        }}
       >
         <span class="label no-drag">Notch Capsule</span>
       </div>
@@ -290,6 +460,9 @@
       align-items: center;
       justify-content: center;
       pointer-events: none;
+      /* Hardware acceleration and layout containment */
+      transform: translateZ(0);
+      contain: layout style paint;
     }
 
     /* Make the whole window draggable (great for a tiny notch window) */
@@ -300,11 +473,14 @@
       margin-left: 2px;
       -webkit-app-region: no-drag; /* critical: hover target should NOT be draggable */
       pointer-events: auto;
-      /* Hardware acceleration for smooth transitions */
-      transform: translateZ(0);
+      /* Maximum hardware acceleration for 60fps+ transitions */
+      transform: translate3d(0, 0, 0);
       backface-visibility: hidden;
+      perspective: 1000px;
       will-change: transform, opacity;
-      opacity: 0; /* Invisible but still interactive */
+      contain: layout style paint;
+      /* Force GPU layer */
+      isolation: isolate;
     }
     .drag-strip {
       position: fixed; top: -6px; left: 0; width: 100%; height: 8px;
@@ -319,74 +495,75 @@
       align-items: center;
       justify-content: center;
       pointer-events: auto;
-      padding: 1.5rem;
-      background: black;
-      border-radius: 0 0 26px 26px;
-      border: none!important;
+      padding: 2.25rem 2.5rem 2rem;
+      background: #000;
+      border: none !important;
       transform-origin: top center;
+      overflow: hidden;
+      box-shadow:
+        0 28px 90px -40px rgba(0, 0, 0, 0.85),
+        0 16px 48px -28px rgba(0, 0, 0, 0.55);
+      -webkit-mask-image: var(--notch-mask);
+      mask-image: var(--notch-mask);
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      -webkit-mask-size: 100% 100%;
+      mask-size: 100% 100%;
+      -webkit-mask-position: center;
+      mask-position: center;
       
-      /* SwiftUI-style transitions */
-      transition-property: transform, opacity, background-color, box-shadow;
-      transition-duration: var(--dur-fast);
-      transition-timing-function: var(--ease-spring);
-      will-change: transform, opacity, background-color, box-shadow;
+      /* Allow anime.js to control all animations */
+      will-change: transform, opacity, filter;
       
-      /* Hardware acceleration and smooth rendering */
-      transform: translateZ(0);
+      /* Maximum hardware acceleration for 120fps on ProMotion displays */
+      transform: translate3d(0, 0, 0);
       backface-visibility: hidden;
+      perspective: 1000px;
+      contain: layout style paint;
+      isolation: isolate;
+      /* Optimize compositing and rendering */
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      image-rendering: -webkit-optimize-contrast;
     }
 
     .expanded-wrapper:hover {
-      background: rgba(12, 12, 12, 0.9);
+      background: rgba(12, 12, 12, 0.92);
       box-shadow:
-        0 32px 72px -38px rgba(0, 0, 0, 0.85),
-        0 10px 28px -16px rgba(0, 0, 0, 0.6);
+        0 36px 120px -36px rgba(0, 0, 0, 0.92),
+        0 18px 52px -28px rgba(0, 0, 0, 0.65);
+      transition: background-color 180ms ease-out, box-shadow 180ms ease-out;
     }
     
   
-    /* === Notch styling for your .rounded-tab container === */
+    /* === Notch styling driven by the supplied SVG === */
     .rounded-tab {
-      /* Tunables (derived from your logical size) */
-      --notch-radius: 18px;     /* main corner radius */
-      --ear-size: 18px;         /* size of outer "ears" */
-      --bg: #000000;            /* notch fill */
-      --edge: #0009;            /* subtle border edge */
-      /* --shadow: 0 2px 12px #0008, 0 2px 6px #0005; */
-  
       position: relative;
       box-sizing: border-box;
-      background: var(--bg);
-      box-shadow: var(--shadow);
-  
-      /* Elliptical radii to mimic macOS notch curvature */
-      border-radius:
-        var(--notch-radius) var(--notch-radius) calc(var(--notch-radius) * 1.9) calc(var(--notch-radius) * 1.9)
-        / var(--notch-radius) var(--notch-radius) calc(var(--notch-radius) * 2.6) calc(var(--notch-radius) * 2.6);
-  
-      overflow: visible;
-      padding: 0 10px;
-    }
-  
-    /* "Ears" that soften the outer top corners (looks closer to real notch) */
-
-    .rounded-tab::after {
-      content: "";
-      position: absolute;
-      top: -1px; /* align with border */
-      width: var(--ear-size);
-      height: var(--ear-size);
-      background: var(--bg);
-      border-top: 1px solid var(--edge);
-    }
-    .rounded-tab::before {
-      left: calc(-1 * var(--ear-size));
-      border-radius: var(--ear-size) 0 0 0;
-      box-shadow: -1px 0 0 0 var(--edge);
-    }
-    .rounded-tab::after {
-      right: calc(-1 * var(--ear-size));
-      border-radius: 0 var(--ear-size) 0 0;
-      box-shadow: 1px 0 0 0 var(--edge);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 16px;
+      background: #000;
+      color: #f5f5f5;
+      overflow: hidden;
+      box-shadow:
+        0 12px 32px rgba(0, 0, 0, 0.28),
+        0 4px 12px rgba(0, 0, 0, 0.22);
+      -webkit-mask-image: var(--notch-mask);
+      mask-image: var(--notch-mask);
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      -webkit-mask-size: 100% 100%;
+      mask-size: 100% 100%;
+      -webkit-mask-position: center;
+      mask-position: center;
+      /* Hardware acceleration */
+      transform: translate3d(0, 0, 0);
+      backface-visibility: hidden;
+      contain: layout style paint;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
   
     /* Label/text inside */
@@ -396,17 +573,6 @@
       user-select: none;
       pointer-events: none;
       opacity: 0.9;
-    }
-
-    /* Optional: use this class when changing to open to add a subtle bounce */
-    @keyframes bouncy-open {
-      0%   { transform: scale(0.98); }
-      40%  { transform: scale(1.03); }
-      60%  { transform: scale(0.995); }
-      100% { transform: scale(1); }
-    }
-    .expanded-wrapper.animate-bouncy-open {
-      animation: bouncy-open var(--dur-fast) var(--ease-bouncy);
     }
   
   

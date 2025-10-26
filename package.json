@@ -39,6 +39,7 @@
 	},
 	"dependencies": {
 		"@tauri-apps/api": "^2.9.0",
-		"@tauri-apps/plugin-positioner": "^2.3.0"
+		"@tauri-apps/plugin-positioner": "^2.3.0",
+		"animejs": "^4.2.2"
 	}
 }
