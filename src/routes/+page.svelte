@@ -26,7 +26,7 @@
 
   let capsuleMedia = $state<MediaInfo | null>(null);
   let capsuleArtwork = $state<string | null>(null);
-  let mediaPollInterval: number | undefined;
+  let mediaPollInterval: ReturnType<typeof setTimeout> | null = null;
   let capsuleFadingOut = $state(false);
   let showCapsuleContent = $state(true); // Control visibility of artwork/waveform
   let capsuleRenderKey = $state(0); // Force re-render on collapse
@@ -34,6 +34,12 @@
   let capsuleWaveColor = $state(DEFAULT_WAVE_COLOR);
   const artworkColorCache = new Map<string, string>();
   let artworkColorJob = 0;
+  let isFetchingMedia = false;
+  let openIntentToken = 0;
+  let hasPendingOpen = false;
+  let capsuleHasFocus = false;
+  const MEDIA_POLL_ACTIVE_MS = 1200;
+  const MEDIA_POLL_IDLE_MS = 4000;
 
   // Ultra-smooth Anime.js animations with spring physics
   let expandedAnime: JSAnimation | null = null;
@@ -244,8 +250,9 @@
     const notchPathD = 'M120 4C120 1.79086 121.791 0 124 0H127V0H0V0H3C5.20914 0 7 1.79086 7 4V14C7 17.3137 9.68629 20 13 20H114C117.314 20 120 17.3137 120 14V4Z';
     const notchMaskSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 127 20" preserveAspectRatio="none"><path d="${notchPathD}" fill="white"/></svg>`;
     const notchMaskUri = `url("data:image/svg+xml,${encodeURIComponent(notchMaskSvg)}")`;
+    const HOVER_HIT_SLOP = 12;
 
-    async function animateWindowSize(targetWidth: number, targetHeight: number, duration = 280) {
+  async function animateWindowSize(targetWidth: number, targetHeight: number, duration = 280) {
       if (!windowInstance) return;
 
       if (cancelWindowResize) {
@@ -264,8 +271,10 @@
       const deltaHeight = targetHeight - startHeight;
 
       if (Math.abs(deltaWidth) < 0.5 && Math.abs(deltaHeight) < 0.5) {
-        await windowInstance.setSize(new LogicalSize(Math.round(targetWidth), Math.round(targetHeight)));
-        await moveWindow(Position.TopCenter);
+        await windowInstance
+          .setSize(new LogicalSize(Math.round(targetWidth), Math.round(targetHeight)))
+          .catch(() => {});
+        await moveWindow(Position.TopCenter).catch(() => {});
         return;
       }
 
@@ -286,15 +295,12 @@
           const nextWidth = Math.round(startWidth + deltaWidth * eased);
           const nextHeight = Math.round(startHeight + deltaHeight * eased);
 
-          await windowInstance.setSize(new LogicalSize(nextWidth, nextHeight));
-          // Reposition on every frame to prevent drift
-          await moveWindow(Position.TopCenter).catch(() => {});
+          await windowInstance.setSize(new LogicalSize(nextWidth, nextHeight)).catch(() => {});
+          void moveWindow(Position.TopCenter).catch(() => {});
 
           if (t < 1) {
             frame = requestAnimationFrame(step);
           } else {
-            // Final position adjustment
-            await moveWindow(Position.TopCenter).catch(() => {});
             resolve();
           }
         };
@@ -308,6 +314,7 @@
         frame = requestAnimationFrame(step);
       });
 
+      await moveWindow(Position.TopCenter).catch(() => {});
       cancelWindowResize = null;
     }
 
@@ -330,41 +337,131 @@
 
   let unlisten: (() => void) | null = null;
 
-  function updatePointerState(event: PointerEvent) {
-    if (!expandedEl || !notchExpanded) {
-      pointerInExpanded = false;
+  function isWithinRect(rect: DOMRect, x: number, y: number, padding = 0) {
+    return (
+      x >= rect.left - padding &&
+      x <= rect.right + padding &&
+      y >= rect.top - padding &&
+      y <= rect.bottom + padding
+    );
+  }
+
+  function cancelScheduledOpen() {
+    if (hasPendingOpen) {
+      hasPendingOpen = false;
+      capsuleFadingOut = false;
+      showCapsuleContent = true;
+    }
+    openIntentToken++;
+  }
+
+  async function updateCapsuleFocus(focused: boolean) {
+    if (capsuleHasFocus === focused) {
       return;
     }
-    const rect = expandedEl.getBoundingClientRect();
+
+    try {
+      await invoke('set_capsule_focus', { focus: focused });
+      if (focused && windowInstance) {
+        await windowInstance.setFocusable(true).catch(() => {});
+        await windowInstance.setFocus().catch(() => {});
+      }
+      capsuleHasFocus = focused;
+    } catch (error) {
+      console.warn('Failed to update capsule focus state:', error);
+    }
+  }
+
+  function clearMediaPoll() {
+    if (mediaPollInterval) {
+      clearTimeout(mediaPollInterval);
+      mediaPollInterval = null;
+    }
+  }
+
+  function scheduleMediaPoll(delay: number) {
+    clearMediaPoll();
+    const safeDelay = Math.max(250, delay);
+    mediaPollInterval = setTimeout(async () => {
+      const playing = await fetchCapsuleMedia();
+      scheduleMediaPoll(playing ? MEDIA_POLL_ACTIVE_MS : MEDIA_POLL_IDLE_MS);
+    }, safeDelay);
+  }
+
+  function updatePointerState(event: PointerEvent) {
     const { clientX, clientY } = event;
-    pointerInExpanded =
-      clientX >= rect.left &&
-      clientX <= rect.right &&
-      clientY >= rect.top &&
-      clientY <= rect.bottom;
+
+    if (expandedEl && notchExpanded) {
+      pointerInExpanded = isWithinRect(expandedEl.getBoundingClientRect(), clientX, clientY, HOVER_HIT_SLOP);
+      return;
+    }
+
+    pointerInExpanded = false;
+
+    if (!capsuleEl || notchExpanded) {
+      return;
+    }
+
+    const rect = capsuleEl.getBoundingClientRect();
+    const withinHitArea = isWithinRect(rect, clientX, clientY, HOVER_HIT_SLOP);
+
+    if (withinHitArea) {
+      if (!manualHold) {
+        manualHold = true;
+        if (capsuleEl) animateCapsuleHoverIn(capsuleEl);
+        void openNotch();
+      }
+    } else if (manualHold) {
+      manualHold = false;
+      if (capsuleEl) animateCapsuleHoverOut(capsuleEl);
+      cancelScheduledOpen();
+    }
   }
 
   function handlePointerLeave() {
+    manualHold = false;
     pointerInExpanded = false;
+    cancelScheduledOpen();
   }
 
-  function openNotch() {
-    if (!notchExpanded) {
-      // Hide capsule content before morphing
-      showCapsuleContent = false;
-      capsuleFadingOut = true;
-      
-      // Start expansion after brief fade
-      setTimeout(() => {
-        notchExpanded = true;
-        resizeWindow(true);
-        syncNativeExpanded(true);
-        capsuleFadingOut = false;
-      }, 150);
+  async function openNotch() {
+    if (notchExpanded || DEV_KEEP_NOTCH_EXPANDED) {
+      hasPendingOpen = false;
+      capsuleFadingOut = false;
+      showCapsuleContent = true;
+      if (notchExpanded) {
+        await updateCapsuleFocus(true);
+      }
+      return;
+    }
+
+    const token = ++openIntentToken;
+    hasPendingOpen = true;
+    showCapsuleContent = false;
+    capsuleFadingOut = true;
+
+    await wait(150);
+
+    if (token !== openIntentToken || notchExpanded) {
+      hasPendingOpen = false;
+      return;
+    }
+
+    hasPendingOpen = false;
+    notchExpanded = true;
+    capsuleFadingOut = false;
+
+    try {
+      await resizeWindow(true);
+      await updateCapsuleFocus(true);
+    } finally {
+      syncNativeExpanded(true);
     }
   }
 
   async function closeNotch() {
+    cancelScheduledOpen();
+
     if (!notchExpanded || DEV_KEEP_NOTCH_EXPANDED || closingNotch) {
       return;
     }
@@ -398,6 +495,7 @@
       await resizeWindowSync(targetWidth, notchHeight);
       
       syncNativeExpanded(false);
+      await updateCapsuleFocus(false);
       
       // Force complete re-render with new key
       await wait(30);
@@ -547,10 +645,16 @@
   }
 
   // Fetch media for capsule display
-  async function fetchCapsuleMedia() {
+  async function fetchCapsuleMedia(): Promise<boolean> {
+    if (isFetchingMedia) {
+      return capsuleMedia?.is_playing ?? false;
+    }
+    isFetchingMedia = true;
+    let isPlaying = capsuleMedia?.is_playing ?? false;
     try {
       const media = await invoke<MediaInfo | null>('get_current_media');
       capsuleMedia = media;
+      isPlaying = !!media?.is_playing;
       
       if (media) {
         const currentTrackId = getCapsuleTrackId(media);
@@ -570,10 +674,14 @@
         capsuleArtwork = null;
         lastCapsuleTrackId = '';
       }
+      return isPlaying;
     } catch (error) {
       capsuleMedia = null;
       capsuleArtwork = null;
       lastCapsuleTrackId = '';
+      return false;
+    } finally {
+      isFetchingMedia = false;
     }
   }
 
@@ -605,10 +713,12 @@
       await win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_HEIGHT));
       await moveWindow(Position.TopCenter);
       syncNativeExpanded(true);
+      await updateCapsuleFocus(true);
     } else {
       await win.setSize(new LogicalSize(notchWidth, notchHeight));
       await moveWindow(Position.TopCenter);
       syncNativeExpanded(false);
+      await updateCapsuleFocus(false);
     }
 
     // Listen for native hover (works even when window not focused)
@@ -617,24 +727,25 @@
       if (inside) {
         manualHold = false;
         pointerInExpanded = false;
-        openNotch();
+        void openNotch();
       } else if (!DEV_KEEP_NOTCH_EXPANDED) {
+        cancelScheduledOpen();
         requestAnimationFrame(() => {
           if (!(manualHold || pointerInExpanded)) {
-            closeNotch();
+            void closeNotch();
           }
         });
       }
     });
 
     // Fetch media for capsule
-    fetchCapsuleMedia();
-    mediaPollInterval = setInterval(fetchCapsuleMedia, 5000) as unknown as number;
+    const initiallyPlaying = await fetchCapsuleMedia();
+    scheduleMediaPoll(initiallyPlaying ? MEDIA_POLL_ACTIVE_MS : MEDIA_POLL_IDLE_MS);
   });
 
   onDestroy(() => {
     if (unlisten) unlisten();
-    if (mediaPollInterval) clearInterval(mediaPollInterval);
+    clearMediaPoll();
     window.removeEventListener('pointermove', updatePointerState);
     window.removeEventListener('pointerleave', handlePointerLeave);
     if (cancelWindowResize) {
@@ -659,6 +770,10 @@
     if (!DEV_KEEP_NOTCH_EXPANDED) {
       syncNativeExpanded(false);
     }
+    if (capsuleHasFocus) {
+      invoke('set_capsule_focus', { focus: false }).catch(() => {});
+      capsuleHasFocus = false;
+    }
   });
   </script>
   <div class="surface">
@@ -673,12 +788,13 @@
         onmouseenter={() => {
           manualHold = true;
           pointerInExpanded = true;
-          openNotch();
+          void openNotch();
         }}
         onmouseleave={() => {
           manualHold = false;
           pointerInExpanded = false;
-          closeNotch();
+          cancelScheduledOpen();
+          void closeNotch();
         }}
       >
         <NotchExpanded />
@@ -693,14 +809,15 @@
           onpointerenter={(e) => {
             manualHold = true;
             if (capsuleEl) animateCapsuleHoverIn(capsuleEl);
-            openNotch();
+            void openNotch();
           }}
           onpointerleave={() => {
             manualHold = false;
             pointerInExpanded = false;
             if (capsuleEl) animateCapsuleHoverOut(capsuleEl);
+            cancelScheduledOpen();
             if (!DEV_KEEP_NOTCH_EXPANDED) {
-              closeNotch();
+              void closeNotch();
             }
           }}
         >

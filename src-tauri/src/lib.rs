@@ -192,6 +192,74 @@ fn set_notch_expanded(expanded: bool, state: State<HoverState>) {
 #[tauri::command]
 fn set_notch_expanded(_expanded: bool) {}
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn set_capsule_focus(focus: bool, app: tauri::AppHandle) -> Result<(), String> {
+    use core::ffi::c_void;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSApp, NSWindow, NSWindowStyleMask};
+    use std::sync::mpsc::channel;
+
+    let app_for_closure = app.clone();
+    let (tx, rx) = channel();
+    if let Err(err) = app.run_on_main_thread(move || {
+        let result = (|| -> Result<(), String> {
+            let Some(win) = app_for_closure.get_webview_window("notch-capsule") else {
+                return Err("notch window not found".into());
+            };
+
+            let raw: *mut c_void = win
+                .ns_window()
+                .map_err(|_| "unable to access native window".to_string())?;
+            if raw.is_null() {
+                return Err("native window pointer was null".into());
+            }
+
+            let obj: *mut AnyObject = raw.cast();
+            let ns_win: &NSWindow = unsafe { &*(obj as *mut NSWindow) };
+            let mut mask = ns_win.styleMask();
+
+            if focus {
+                mask.remove(NSWindowStyleMask::NonactivatingPanel);
+                ns_win.setStyleMask(mask);
+                if let Some(mtm) = MainThreadMarker::new() {
+                    let ns_app = NSApp(mtm);
+                    ns_app.activate();
+                }
+                ns_win.makeKeyAndOrderFront(None);
+            } else {
+                mask.insert(NSWindowStyleMask::NonactivatingPanel);
+                ns_win.setStyleMask(mask);
+                if let Some(mtm) = MainThreadMarker::new() {
+                    let ns_app = NSApp(mtm);
+                    ns_app.deactivate();
+                }
+                ns_win.orderBack(None);
+            }
+
+            Ok(())
+        })();
+
+        let _ = tx.send(result);
+    }) {
+        return Err(format!("failed to schedule focus change: {err:?}"));
+    }
+
+    match rx
+        .recv()
+        .map_err(|_| "focus change channel dropped".to_string())?
+    {
+        Ok(()) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn set_capsule_focus(_focus: bool, _app: tauri::AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
 // Get currently playing media from macOS Now Playing (works with ALL apps)
 #[cfg(target_os = "macos")]
 #[tauri::command]
@@ -672,6 +740,7 @@ pub fn run() {
             get_notch_dimensions,
             ensure_accessibility,
             set_notch_expanded,
+            set_capsule_focus,
             get_current_media,
             get_media_artwork,
             media_play_pause,
