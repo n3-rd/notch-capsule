@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "notch-capsule",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.n3rd.notch-capsule",
   "build": {
     "frontendDist": "../static",
     "devUrl": "http://localhost:5173",
