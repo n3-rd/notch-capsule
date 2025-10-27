@@ -24,6 +24,18 @@ use tauri::Emitter; // needed for AppHandle.emit(...)
 #[cfg(target_os = "macos")]
 use tauri::State;
 
+// Media info structure
+#[derive(serde::Serialize, Clone, Debug)]
+struct MediaInfo {
+    title: String,
+    artist: String,
+    album: String,
+    artwork_url: Option<String>,
+    duration: f64,
+    elapsed: f64,
+    is_playing: bool,
+}
+
 // ---------- Notch metrics (accurate; macOS 12+) ----------
 #[cfg(target_os = "macos")]
 #[derive(serde::Serialize)]
@@ -180,6 +192,363 @@ fn set_notch_expanded(expanded: bool, state: State<HoverState>) {
 #[tauri::command]
 fn set_notch_expanded(_expanded: bool) {}
 
+// Get currently playing media from macOS Now Playing (works with ALL apps)
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn get_current_media() -> Option<MediaInfo> {
+    use std::process::Command;
+
+    // Use AppleScript to get Now Playing info from macOS system-wide
+    // This works with Music, Spotify, Chrome, Safari, VLC, and ANY app that reports to Now Playing
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"
+            use framework "Foundation"
+            use framework "MediaPlayer"
+            use scripting additions
+            
+            try
+                -- Get Now Playing info from system
+                set infoCenter to current application's MPNowPlayingInfoCenter's defaultCenter()
+                set nowPlayingInfo to infoCenter's nowPlayingInfo()
+                
+                if nowPlayingInfo is not missing value then
+                    set titleKey to current application's MPMediaItemPropertyTitle
+                    set artistKey to current application's MPMediaItemPropertyArtist
+                    set albumKey to current application's MPMediaItemPropertyAlbumTitle
+                    set durationKey to current application's MPMediaItemPropertyPlaybackDuration
+                    set elapsedKey to current application's MPNowPlayingInfoPropertyElapsedPlaybackTime
+                    set rateKey to current application's MPNowPlayingInfoPropertyPlaybackRate
+                    
+                    set trackTitle to (nowPlayingInfo's objectForKey:titleKey) as text
+                    set trackArtist to (nowPlayingInfo's objectForKey:artistKey) as text
+                    set trackAlbum to (nowPlayingInfo's objectForKey:albumKey) as text
+                    set trackDuration to (nowPlayingInfo's objectForKey:durationKey) as real
+                    set trackElapsed to (nowPlayingInfo's objectForKey:elapsedKey) as real
+                    set playbackRate to (nowPlayingInfo's objectForKey:rateKey) as real
+                    
+                    set isPlaying to (playbackRate > 0)
+                    
+                    return trackTitle & "|||" & trackArtist & "|||" & trackAlbum & "|||" & trackDuration & "|||" & trackElapsed & "|||" & isPlaying & "|||" & (current date)
+                end if
+            end try
+            
+            -- Fallback: Try common music apps if Now Playing API fails
+            try
+                tell application "System Events"
+                    set musicRunning to (name of processes) contains "Music"
+                end tell
+                
+                if musicRunning then
+                    tell application "Music"
+                        if player state is not stopped then
+                            set trackName to name of current track
+                            set artistName to artist of current track
+                            set albumName to album of current track
+                            set trackDuration to duration of current track
+                            set trackPosition to player position
+                            set isPlaying to (player state is playing)
+                            return trackName & "|||" & artistName & "|||" & albumName & "|||" & trackDuration & "|||" & trackPosition & "|||" & isPlaying & "|||" & (current date)
+                        end if
+                    end tell
+                end if
+            end try
+            
+            -- Try Spotify
+            try
+                tell application "System Events"
+                    set spotifyRunning to (name of processes) contains "Spotify"
+                end tell
+                
+                if spotifyRunning then
+                    tell application "Spotify"
+                        if player state is not stopped then
+                            set trackName to name of current track
+                            set artistName to artist of current track
+                            set albumName to album of current track
+                            set trackDuration to duration of current track / 1000
+                            set trackPosition to player position
+                            set isPlaying to (player state is playing)
+                            return trackName & "|||" & artistName & "|||" & albumName & "|||" & trackDuration & "|||" & trackPosition & "|||" & isPlaying & "|||" & (current date)
+                        end if
+                    end tell
+                end if
+            end try
+            
+            return ""
+        "#)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !result.is_empty() {
+            let parts: Vec<&str> = result.split("|||").collect();
+            if parts.len() >= 6 {
+                return Some(MediaInfo {
+                    title: parts[0].to_string(),
+                    artist: parts[1].to_string(),
+                    album: parts[2].to_string(),
+                    artwork_url: None, // Will fetch separately
+                    duration: parts[3].parse().unwrap_or(0.0),
+                    elapsed: parts[4].parse().unwrap_or(0.0),
+                    is_playing: parts[5] == "true",
+                });
+            }
+        }
+    }
+
+    None
+}
+
+// Get album artwork as base64 data URL
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn get_media_artwork() -> Option<String> {
+    use std::process::Command;
+
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"
+            try
+                tell application "System Events"
+                    set musicRunning to (name of processes) contains "Music"
+                end tell
+                
+                if musicRunning then
+                    tell application "Music"
+                        if player state is not stopped then
+                            set artworkData to data of artwork 1 of current track
+                            return artworkData as «class PNGf»
+                        end if
+                    end tell
+                end if
+            end try
+            
+            try
+                tell application "System Events"
+                    set spotifyRunning to (name of processes) contains "Spotify"
+                end tell
+                
+                if spotifyRunning then
+                    tell application "Spotify"
+                        if player state is not stopped then
+                            return artwork url of current track
+                        end if
+                    end tell
+                end if
+            end try
+            
+            return ""
+        "#)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !result.is_empty() && result != "missing value" {
+            return Some(result);
+        }
+    }
+
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn get_current_media() -> Option<MediaInfo> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn get_media_artwork() -> Option<String> {
+    None
+}
+
+// Control media playback
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn media_play_pause() -> bool {
+    use std::process::Command;
+
+    // Try Music app
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"
+            tell application "System Events"
+                set musicRunning to (name of processes) contains "Music"
+            end tell
+            
+            if musicRunning then
+                tell application "Music"
+                    playpause
+                    return true
+                end tell
+            end if
+            
+            -- Try Spotify
+            tell application "System Events"
+                set spotifyRunning to (name of processes) contains "Spotify"
+            end tell
+            
+            if spotifyRunning then
+                tell application "Spotify"
+                    playpause
+                    return true
+                end tell
+            end if
+            
+            return false
+        "#)
+        .output()
+        .ok();
+
+    output.map(|o| o.status.success()).unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn media_next_track() -> bool {
+    use std::process::Command;
+
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"
+            tell application "System Events"
+                set musicRunning to (name of processes) contains "Music"
+            end tell
+            
+            if musicRunning then
+                tell application "Music"
+                    next track
+                    return true
+                end tell
+            end if
+            
+            tell application "System Events"
+                set spotifyRunning to (name of processes) contains "Spotify"
+            end tell
+            
+            if spotifyRunning then
+                tell application "Spotify"
+                    next track
+                    return true
+                end tell
+            end if
+            
+            return false
+        "#)
+        .output()
+        .ok();
+
+    output.map(|o| o.status.success()).unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn media_previous_track() -> bool {
+    use std::process::Command;
+
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"
+            tell application "System Events"
+                set musicRunning to (name of processes) contains "Music"
+            end tell
+            
+            if musicRunning then
+                tell application "Music"
+                    previous track
+                    return true
+                end tell
+            end if
+            
+            tell application "System Events"
+                set spotifyRunning to (name of processes) contains "Spotify"
+            end tell
+            
+            if spotifyRunning then
+                tell application "Spotify"
+                    previous track
+                    return true
+                end tell
+            end if
+            
+            return false
+        "#)
+        .output()
+        .ok();
+
+    output.map(|o| o.status.success()).unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn media_play_pause() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn media_next_track() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn media_previous_track() -> bool {
+    false
+}
+
+// Seek to a specific position in the track
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn media_seek(position: f64) -> bool {
+    use std::process::Command;
+
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(format!(
+            r#"
+            tell application "System Events"
+                set musicRunning to (name of processes) contains "Music"
+            end tell
+            
+            if musicRunning then
+                tell application "Music"
+                    set player position to {}
+                    return true
+                end tell
+            end if
+            
+            tell application "System Events"
+                set spotifyRunning to (name of processes) contains "Spotify"
+            end tell
+            
+            if spotifyRunning then
+                tell application "Spotify"
+                    set player position to {}
+                    return true
+                end tell
+            end if
+            
+            return false
+            "#,
+            position, position
+        ))
+        .output()
+        .ok();
+
+    output.map(|o| o.status.success()).unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn media_seek(_position: f64) -> bool {
+    false
+}
+
 #[cfg(target_os = "macos")]
 fn handle_mouse_move<F>(
     st: &Arc<Mutex<(bool, Instant)>>,
@@ -246,7 +615,7 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
         let (zone_w, zone_h) = if expanded {
             (700.0, 200.0)
         } else {
-            (320.0, 40.0)
+            (460.0, 50.0) // Wider hover zone to match expanded capsule
         };
         let x = f.origin.x + (f.size.width - zone_w) * 0.5;
         let y = f.origin.y + f.size.height - zone_h;
@@ -302,7 +671,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_notch_dimensions,
             ensure_accessibility,
-            set_notch_expanded
+            set_notch_expanded,
+            get_current_media,
+            get_media_artwork,
+            media_play_pause,
+            media_next_track,
+            media_previous_track,
+            media_seek
         ])
         .setup(|app| {
             #[cfg(desktop)]

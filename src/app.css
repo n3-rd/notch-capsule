@@ -1,20 +1,39 @@
 @import 'tailwindcss';
+
+/* Prevent any borders or outlines */
+*, *::before, *::after {
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+}
+
+/* Ensure transparent background with no border */
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 /* Hover target should NOT be draggable */
-.capsule { -webkit-app-region: no-drag; }
+.capsule { 
+  -webkit-app-region: no-drag;
+  border: none !important;
+}
 
 /* Add a tiny drag area above the notch window (adjust height to taste) */
 .drag-strip {
   position: fixed;
-  top: -6px;
+  top: -1px;
   left: 0;
   width: 100%;
-  height: 8px;
+  height: 4px;
   -webkit-app-region: drag;
   pointer-events: auto;
-}
-
-body{
-  border: none!important;
 }
 
 .view-container{

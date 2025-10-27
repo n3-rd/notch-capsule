@@ -11,6 +11,29 @@
   import { listen } from '@tauri-apps/api/event';
   import NotchExpanded from '$lib/notch-expanded.svelte';
 	import { notchExpandedHeight, notchExpandedWidth, DEV_KEEP_NOTCH_EXPANDED } from '$lib';
+	import Waveform from '$lib/components/music/waveform.svelte';
+
+  // Media info for capsule display
+  interface MediaInfo {
+    title: string;
+    artist: string;
+    album: string;
+    artwork_url?: string;
+    duration: number;
+    elapsed: number;
+    is_playing: boolean;
+  }
+
+  let capsuleMedia = $state<MediaInfo | null>(null);
+  let capsuleArtwork = $state<string | null>(null);
+  let mediaPollInterval: number | undefined;
+  let capsuleFadingOut = $state(false);
+  let showCapsuleContent = $state(true); // Control visibility of artwork/waveform
+  let capsuleRenderKey = $state(0); // Force re-render on collapse
+  const DEFAULT_WAVE_COLOR = '#ffffff';
+  let capsuleWaveColor = $state(DEFAULT_WAVE_COLOR);
+  const artworkColorCache = new Map<string, string>();
+  let artworkColorJob = 0;
 
   // Ultra-smooth Anime.js animations with spring physics
   let expandedAnime: JSAnimation | null = null;
@@ -23,19 +46,20 @@
       expandedAnime = null;
     }
     
-    // Set initial state explicitly
-
+    // Set initial state for morph
     node.style.opacity = '0';
+    node.style.transform = 'scale(0.92)';
 
     // Small delay to ensure styles are applied
     requestAnimationFrame(() => {
       expandedAnime = animate(node, {
-        scale: [0.88, 1],
-        translateY: ['-4px', '0px'],
+        scale: [0.92, 1],
+        translateY: ['-2px', '0px'],
         opacity: [0, 1],
-        blur: ['8px', '0px'],
-        duration: 320,
-        ease: 'spring(1, 70, 8, 0)',
+        blur: ['4px', '0px'],
+        duration: 380,
+        delay: 0,
+        ease: 'spring(1, 80, 10, 0)',
         composition: 'replace',
       });
     });
@@ -71,15 +95,14 @@
     
     // Set initial state
     node.style.opacity = '0';
-    node.style.transform = 'scale(0.94) translate3d(0, 0, 0)';
 
     requestAnimationFrame(() => {
       capsuleAnime = animate(node, {
         opacity: [0, 1],
-        scale: [0.94, 1],
-        duration: 160,
-        delay: 310,
-        ease: 'out(4)',
+        scale: [0.96, 1],
+        duration: 280,
+        delay: 200,
+        ease: 'spring(1, 60, 10, 0)',
         composition: 'replace',
       });
     });
@@ -140,8 +163,9 @@
       scale: number;
     };
   
-    let notchWidth = $state(320);   // fallback
-    let notchHeight = $state(34);
+    let notchWidth = $state(420);   // wider fallback for better visibility
+    let notchWidthNormal = $state(240);  // normal width when not playing
+    let notchHeight = $state(37);  // slightly taller to match macOS notch
     let notchExpanded = $state(false)
     let manualHold = $state(false);
     let pointerInExpanded = $state(false);
@@ -149,6 +173,44 @@
     let capsuleEl = $state<HTMLDivElement | null>(null);
     let windowInstance: TauriWindow | null = null;
     let cancelWindowResize: (() => void) | null = null;
+    let closingNotch = false;
+
+    $effect(() => {
+      const artwork = capsuleArtwork;
+      const jobId = ++artworkColorJob;
+
+      if (!artwork) {
+        capsuleWaveColor = DEFAULT_WAVE_COLOR;
+        return;
+      }
+
+      const cached = artworkColorCache.get(artwork);
+      if (cached) {
+        capsuleWaveColor = cached;
+        return;
+      }
+
+      capsuleWaveColor = DEFAULT_WAVE_COLOR;
+
+      extractDominantColor(artwork)
+        .then((color) => {
+          if (artworkColorJob !== jobId) return;
+
+          if (color) {
+            artworkColorCache.set(artwork, color);
+            capsuleWaveColor = color;
+          } else {
+            artworkColorCache.set(artwork, DEFAULT_WAVE_COLOR);
+            capsuleWaveColor = DEFAULT_WAVE_COLOR;
+          }
+        })
+        .catch(() => {
+          if (artworkColorJob === jobId) {
+            artworkColorCache.set(artwork, DEFAULT_WAVE_COLOR);
+            capsuleWaveColor = DEFAULT_WAVE_COLOR;
+          }
+        });
+    });
 
     // Trigger animations when notchExpanded changes
     $effect(() => {
@@ -175,6 +237,7 @@
       return 1 - inv * inv * inv;
     };
 
+    const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
     const round = (value: number) => Math.round(value * 100) / 100;
     const toPx = (value: number) => `${round(value)}px`;
     // More pronounced notch ears with extended top curves
@@ -202,6 +265,7 @@
 
       if (Math.abs(deltaWidth) < 0.5 && Math.abs(deltaHeight) < 0.5) {
         await windowInstance.setSize(new LogicalSize(Math.round(targetWidth), Math.round(targetHeight)));
+        await moveWindow(Position.TopCenter);
         return;
       }
 
@@ -209,9 +273,8 @@
         const start = performance.now();
         let frame = 0;
         let cancelled = false;
-        let repositionTick = 0;
 
-        const step = (ts: number) => {
+        const step = async (ts: number) => {
           if (!windowInstance || cancelled) {
             resolve();
             return;
@@ -223,12 +286,15 @@
           const nextWidth = Math.round(startWidth + deltaWidth * eased);
           const nextHeight = Math.round(startHeight + deltaHeight * eased);
 
-          void windowInstance.setSize(new LogicalSize(nextWidth, nextHeight));
-          void moveWindow(Position.TopCenter).catch(() => {});
+          await windowInstance.setSize(new LogicalSize(nextWidth, nextHeight));
+          // Reposition on every frame to prevent drift
+          await moveWindow(Position.TopCenter).catch(() => {});
 
           if (t < 1) {
             frame = requestAnimationFrame(step);
           } else {
+            // Final position adjustment
+            await moveWindow(Position.TopCenter).catch(() => {});
             resolve();
           }
         };
@@ -254,7 +320,9 @@
         await animateWindowSize(EXPANDED_WIDTH, EXPANDED_HEIGHT, 280);
         await moveWindow(Position.TopCenter);
       } else {
-        await animateWindowSize(notchWidth, notchHeight, 220);
+        // Use sync resize for collapse
+        const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
+        await windowInstance.setSize(new LogicalSize(targetWidth, notchHeight));
         await moveWindow(Position.TopCenter);
         await windowInstance.setResizable(false);
       }
@@ -282,30 +350,230 @@
 
   function openNotch() {
     if (!notchExpanded) {
-      notchExpanded = true;
-      resizeWindow(true);
-      syncNativeExpanded(true);
+      // Hide capsule content before morphing
+      showCapsuleContent = false;
+      capsuleFadingOut = true;
+      
+      // Start expansion after brief fade
+      setTimeout(() => {
+        notchExpanded = true;
+        resizeWindow(true);
+        syncNativeExpanded(true);
+        capsuleFadingOut = false;
+      }, 150);
     }
   }
 
-  function closeNotch() {
-    if (notchExpanded && !DEV_KEEP_NOTCH_EXPANDED) {
-      // Trigger exit animation first
+  async function closeNotch() {
+    if (!notchExpanded || DEV_KEEP_NOTCH_EXPANDED || closingNotch) {
+      return;
+    }
+
+    closingNotch = true;
+
+    try {
+      // Hide capsule content during collapse
+      showCapsuleContent = false;
+      
       if (expandedEl) {
         animateExpandOut(expandedEl);
       }
+
+      await wait(280);
+
+      if (DEV_KEEP_NOTCH_EXPANDED || manualHold || pointerInExpanded) {
+        if (expandedEl) {
+          animateExpandIn(expandedEl);
+        }
+        showCapsuleContent = true;
+        return;
+      }
+
+      // Change state first
+      notchExpanded = false;
+      pointerInExpanded = false;
       
-      // Delay state change to allow animation to complete (delay 50ms + duration 260ms = 310ms)
-      setTimeout(() => {
-        notchExpanded = false;
-        pointerInExpanded = false;
-      }, 330);
+      // Resize window
+      const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
+      await resizeWindowSync(targetWidth, notchHeight);
       
-      // Resize window slightly later
-      setTimeout(() => {
-        resizeWindow(false);
-        syncNativeExpanded(false);
-      }, 350);
+      syncNativeExpanded(false);
+      
+      // Force complete re-render with new key
+      await wait(30);
+      capsuleRenderKey++;
+      
+      // Show capsule content after re-render
+      await wait(20);
+      showCapsuleContent = true;
+    } finally {
+      capsuleFadingOut = false;
+      closingNotch = false;
+    }
+  }
+
+  // Synchronous resize for collapse to prevent gaps
+  async function resizeWindowSync(width: number, height: number) {
+    if (!windowInstance) return;
+    
+    try {
+      await windowInstance.setResizable(true);
+      const logicalWidth = Math.round(width);
+      const logicalHeight = Math.round(height);
+      await windowInstance.setSize(new LogicalSize(logicalWidth, logicalHeight));
+      await moveWindow(Position.TopCenter);
+    } catch (error) {
+      console.error('Error resizing window:', error);
+    } finally {
+      try {
+        await windowInstance.setResizable(false);
+      } catch (lockError) {
+        console.error('Error locking window size:', lockError);
+      }
+    }
+  }
+
+  function channelToHex(channel: number) {
+    return Math.min(255, Math.max(0, Math.round(channel))).toString(16).padStart(2, '0');
+  }
+
+  function rgbToHex(r: number, g: number, b: number) {
+    return `#${channelToHex(r)}${channelToHex(g)}${channelToHex(b)}`;
+  }
+
+  function adjustForContrast(r: number, g: number, b: number) {
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
+    if (luminance >= 96) {
+      return { r, g, b };
+    }
+
+    const boost = (value: number) => Math.round(value + (255 - value) * 0.45);
+    return {
+      r: boost(r),
+      g: boost(g),
+      b: boost(b),
+    };
+  }
+
+  function loadArtworkImage(url: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const cleanup = () => {
+        img.onload = null;
+        img.onerror = null;
+      };
+
+      img.crossOrigin = 'anonymous';
+      img.decoding = 'async';
+      img.onload = () => {
+        cleanup();
+        resolve(img);
+      };
+      img.onerror = () => {
+        cleanup();
+        reject(new Error(`Failed to load artwork image: ${url}`));
+      };
+      img.src = url;
+
+      if (img.complete && img.naturalWidth > 0) {
+        cleanup();
+        resolve(img);
+      }
+    });
+  }
+
+  async function extractDominantColor(url: string): Promise<string | null> {
+    try {
+      const image = await loadArtworkImage(url);
+      const size = 16;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+
+      if (!context) {
+        return null;
+      }
+
+      context.imageSmoothingEnabled = true;
+      context.drawImage(image, 0, 0, size, size);
+
+      let rTotal = 0;
+      let gTotal = 0;
+      let bTotal = 0;
+      let count = 0;
+
+      try {
+        const { data } = context.getImageData(0, 0, size, size);
+
+        for (let i = 0; i < data.length; i += 4) {
+          const alpha = data[i + 3];
+          if (alpha < 64) continue;
+          rTotal += data[i];
+          gTotal += data[i + 1];
+          bTotal += data[i + 2];
+          count += 1;
+        }
+      } catch (error) {
+        console.warn('Unable to sample artwork color:', error);
+        return null;
+      } finally {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+
+      if (!count) {
+        return null;
+      }
+
+      const r = Math.round(rTotal / count);
+      const g = Math.round(gTotal / count);
+      const b = Math.round(bTotal / count);
+      const adjusted = adjustForContrast(r, g, b);
+
+      return rgbToHex(adjusted.r, adjusted.g, adjusted.b);
+    } catch (error) {
+      console.warn('Failed to compute dominant artwork color:', error);
+      return null;
+    }
+  }
+
+  // Track ID for artwork caching
+  let lastCapsuleTrackId = $state<string>('');
+
+  function getCapsuleTrackId(media: MediaInfo | null): string {
+    if (!media) return '';
+    return `${media.title}_${media.artist}_${media.duration}`;
+  }
+
+  // Fetch media for capsule display
+  async function fetchCapsuleMedia() {
+    try {
+      const media = await invoke<MediaInfo | null>('get_current_media');
+      capsuleMedia = media;
+      
+      if (media) {
+        const currentTrackId = getCapsuleTrackId(media);
+        const isNewTrack = currentTrackId !== lastCapsuleTrackId;
+        
+        // Fetch artwork if new track or no artwork yet
+        if (isNewTrack || !capsuleArtwork) {
+          lastCapsuleTrackId = currentTrackId;
+          const artwork = await invoke<string | null>('get_media_artwork');
+          if (artwork && artwork.startsWith('http')) {
+            capsuleArtwork = artwork;
+          } else {
+            capsuleArtwork = null;
+          }
+        }
+      } else {
+        capsuleArtwork = null;
+        lastCapsuleTrackId = '';
+      }
+    } catch (error) {
+      capsuleMedia = null;
+      capsuleArtwork = null;
+      lastCapsuleTrackId = '';
     }
   }
 
@@ -322,8 +590,15 @@
     let dims: NotchDimensions | null = null;
     try { dims = await invoke('get_notch_dimensions') as NotchDimensions | null; } catch {}
     if (dims && dims.width_pts > 0 && dims.top_inset_pts > 0) {
-      notchWidth  = Math.round(dims.width_pts);
-      notchHeight = Math.max(28, Math.round(dims.top_inset_pts));
+      // Extend the capsule width beyond the actual notch for better visibility
+      notchWidth  = Math.round(dims.width_pts * 1.5); // 50% wider when playing
+      notchWidthNormal = Math.round(dims.width_pts * 0.9); // Normal width when not playing
+      notchHeight = Math.round(dims.top_inset_pts) + 3; // Match notch height + small buffer
+    } else {
+      // Fallback to wider default
+      notchWidth = 420;
+      notchWidthNormal = 240;
+      notchHeight = 37;
     }
     if (DEV_KEEP_NOTCH_EXPANDED) {
       notchExpanded = true;
@@ -351,10 +626,15 @@
         });
       }
     });
+
+    // Fetch media for capsule
+    fetchCapsuleMedia();
+    mediaPollInterval = setInterval(fetchCapsuleMedia, 5000) as unknown as number;
   });
 
   onDestroy(() => {
     if (unlisten) unlisten();
+    if (mediaPollInterval) clearInterval(mediaPollInterval);
     window.removeEventListener('pointermove', updatePointerState);
     window.removeEventListener('pointerleave', handlePointerLeave);
     if (cancelWindowResize) {
@@ -385,6 +665,7 @@
     <div class="drag-strip"></div>
 
     {#if notchExpanded}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="expanded-wrapper"
         bind:this={expandedEl}
@@ -403,27 +684,51 @@
         <NotchExpanded />
       </div>
     {:else}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="capsule rounded-tab"
-        bind:this={capsuleEl}
-        style={`width:${toPx(notchWidth)}; height:${toPx(notchHeight)}; --notch-mask:${notchMaskUri};`}
-        onpointerenter={(e) => {
-          manualHold = true;
-          if (capsuleEl) animateCapsuleHoverIn(capsuleEl);
-          openNotch();
-        }}
-        onpointerleave={() => {
-          manualHold = false;
-          pointerInExpanded = false;
-          if (capsuleEl) animateCapsuleHoverOut(capsuleEl);
-          if (!DEV_KEEP_NOTCH_EXPANDED) {
-            closeNotch();
-          }
-        }}
-      >
-        <span class="label no-drag">Notch Capsule</span>
-      </div>
+      {#key capsuleRenderKey}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="capsule rounded-tab"
+          bind:this={capsuleEl}
+          style={`width:${toPx(capsuleMedia?.is_playing ? notchWidth : notchWidthNormal)}; height:${toPx(notchHeight)}; --notch-mask:${notchMaskUri};`}
+          onpointerenter={(e) => {
+            manualHold = true;
+            if (capsuleEl) animateCapsuleHoverIn(capsuleEl);
+            openNotch();
+          }}
+          onpointerleave={() => {
+            manualHold = false;
+            pointerInExpanded = false;
+            if (capsuleEl) animateCapsuleHoverOut(capsuleEl);
+            if (!DEV_KEEP_NOTCH_EXPANDED) {
+              closeNotch();
+            }
+          }}
+        >
+        {#if capsuleMedia?.is_playing}
+          {#if showCapsuleContent}
+            <div class="capsule-content" class:morphing-out={capsuleFadingOut}>
+              <!-- Artwork on the left -->
+              <div class="capsule-artwork slide-in-left">
+                {#if capsuleArtwork}
+                  <img src={capsuleArtwork} alt={capsuleMedia.title} class="artwork-image" />
+                {:else}
+                  <div class="artwork-placeholder">🎵</div>
+                {/if}
+              </div>
+              
+              <!-- Waveform on the right -->
+              <div class="capsule-letter slide-in-right">
+                <Waveform color={capsuleWaveColor} />
+              </div>
+            </div>
+          {/if}
+        {:else}
+          {#if showCapsuleContent}
+            <span class="label no-drag" class:morphing-out={capsuleFadingOut}>Notch Capsule</span>
+          {/if}
+        {/if}
+        </div>
+      {/key}
     {/if}
   </div>
 
@@ -446,17 +751,24 @@
     }
 
     :global(html, body) {
-      background: transparent;           /* transparent Tauri window */
+      background: transparent !important;           /* transparent Tauri window */
       width: 100%;
       height: 100%;
+      margin: 0;
+      padding: 0;
+      border: none !important;
+      outline: none !important;
+      overflow: hidden;
     }
 
     .surface {
-      position: relative;
+      position: fixed;  /* Fixed positioning to prevent shifts */
+      top: 0;
+      left: 0;
       width: 100%;
       height: 100%;
       display: flex;
-      align-items: center;
+      align-items: flex-start;  /* Align to top to remove space */
       justify-content: center;
       pointer-events: none;
       /* Hardware acceleration and layout containment */
@@ -469,21 +781,29 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-left: 2px;
+      margin: 0;  /* No margins */
+      padding: 0;
       -webkit-app-region: no-drag; /* critical: hover target should NOT be draggable */
       pointer-events: auto;
+      /* Smooth width transition for morphing */
+      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
       /* Maximum hardware acceleration for 60fps+ transitions */
       transform: translate3d(0, 0, 0);
       backface-visibility: hidden;
       perspective: 1000px;
-      will-change: transform, opacity;
+      will-change: transform, opacity, width;
       contain: layout style paint;
       /* Force GPU layer */
       isolation: isolate;
     }
     .drag-strip {
-      position: fixed; top: -6px; left: 0; width: 100%; height: 8px;
-      -webkit-app-region: drag; pointer-events: auto;
+      position: fixed; 
+      top: -1px;  /* Closer to top edge */
+      left: 0; 
+      width: 100%; 
+      height: 4px;  /* Thinner drag area */
+      -webkit-app-region: drag; 
+      pointer-events: auto;
     }
     .no-drag { -webkit-app-region: no-drag; }
 
@@ -494,8 +814,10 @@
       pointer-events: auto;
       padding: 2rem 2.8rem 2rem;
       padding-bottom: 0;
-      background: #000;
+      background: #000000;  /* True black */
       border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
       transform-origin: top center;
       overflow: hidden;
       -webkit-mask-image: var(--notch-mask);
@@ -535,9 +857,12 @@
       align-items: center;
       justify-content: center;
       padding: 0 16px;
-      background: #000;
+      background: #000000;  /* True black */
       color: #f5f5f5;
       overflow: hidden;
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
       -webkit-mask-image: var(--notch-mask);
       mask-image: var(--notch-mask);
       -webkit-mask-repeat: no-repeat;
@@ -561,6 +886,104 @@
       user-select: none;
       pointer-events: none;
       opacity: 0.9;
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+    }
+
+    /* Capsule content wrapper with flex */
+    .capsule-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      height: 100%;
+      padding: 0 2px;
+      pointer-events: none;
+      opacity: 1;
+      transform: scale(1);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+    }
+
+    /* Morphing out animation */
+    .capsule-content.morphing-out,
+    .label.morphing-out {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+
+    /* Capsule artwork on the left */
+    .capsule-artwork {
+      width: 22px;
+      height: 22px;
+      border-radius: 5px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.05);
+      flex-shrink: 0;
+    }
+
+    .artwork-image {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .artwork-placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      opacity: 0.3;
+    }
+
+    /* Waveform container on the right */
+    .capsule-letter {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    /* Make waveform smaller to fit in capsule */
+    .capsule-letter :global(#wave) {
+      width: 20px !important;
+      height: 16px !important;
+    }
+
+    /* Sliding animations with bounce */
+    .slide-in-left {
+      animation: slideInLeft 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .slide-in-right {
+      animation: slideInRight 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+      animation-delay: 0.08s;
+      animation-fill-mode: both;
+    }
+
+    @keyframes slideInLeft {
+      from {
+        opacity: 0;
+        transform: translateX(-15px) scale(0.88);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+      }
+    }
+
+    @keyframes slideInRight {
+      from {
+        opacity: 0;
+        transform: translateX(15px) scale(0.88);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+      }
     }
   
   

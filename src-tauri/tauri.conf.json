@@ -22,7 +22,8 @@
         "focus": false,
         "width": 200,
         "height": 32,
-        "visibleOnAllWorkspaces": true
+        "visibleOnAllWorkspaces": true,
+        "shadow": false
       }
     ],
     "macOSPrivateApi": true,
