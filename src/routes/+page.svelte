@@ -141,15 +141,15 @@
 			capsuleAnime = null;
 		}
 
-		// Set will-change for GPU optimization
-		node.style.willChange = 'transform, opacity';
+		// Set will-change for GPU optimization (opacity-only since no transform)
+		node.style.willChange = 'opacity';
 
 		requestAnimationFrame(() => {
 			const currentOpacity = parseFloat(window.getComputedStyle(node).opacity) || 1;
 
 			capsuleAnime = animate(node, {
 				opacity: [currentOpacity, 0],
-				// Note: scale animation removed for GPU optimization (transform-only)
+				// Note: scale animation removed for GPU optimization (opacity-only fade)
 				duration: CAPSULE_OUT_DURATION,
 				ease: 'inOut(2)',
 				composition: 'replace',
