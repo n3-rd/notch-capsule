@@ -8,7 +8,7 @@
 
 <div class="notch-container">
 	<TopBar />
-	
+
 	<div class="view-wrapper">
 		{#if $activeTab === 'app'}
 			<AppView />
@@ -22,7 +22,13 @@
 
 <style>
 	:global(body) {
-		font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+		font-family:
+			'Inter',
+			system-ui,
+			-apple-system,
+			BlinkMacSystemFont,
+			'Segoe UI',
+			sans-serif;
 	}
 
 	.notch-container {
