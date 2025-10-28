@@ -46,7 +46,6 @@
 	const EXPAND_IN_DURATION = 320;
 	const EXPAND_OUT_DURATION = 220;
 	const CAPSULE_IN_DURATION = 240;
-	const CAPSULE_OUT_DURATION = 120;
 
 	function animateExpandIn(node: HTMLElement) {
 		if (expandedAnime) {
@@ -135,32 +134,6 @@
 		});
 	}
 
-	function animateCapsuleOut(node: HTMLElement) {
-		if (capsuleAnime) {
-			capsuleAnime.pause();
-			capsuleAnime = null;
-		}
-
-		// Set will-change for GPU optimization (opacity-only since no transform)
-		node.style.willChange = 'opacity';
-
-		requestAnimationFrame(() => {
-			const currentOpacity = parseFloat(window.getComputedStyle(node).opacity) || 1;
-
-			capsuleAnime = animate(node, {
-				opacity: [currentOpacity, 0],
-				// Note: scale animation removed for GPU optimization (opacity-only fade)
-				duration: CAPSULE_OUT_DURATION,
-				ease: 'inOut(2)',
-				composition: 'replace',
-				complete: () => {
-					// Clear will-change after animation completes
-					node.style.willChange = 'auto';
-				}
-			});
-		});
-	}
-
 	function animateCapsuleHoverIn(node: HTMLElement) {
 		if (capsuleHoverAnime) {
 			capsuleHoverAnime.pause();
@@ -208,6 +181,7 @@
 	let windowInstance: TauriWindow | null = null;
 	let cancelWindowResize: (() => void) | null = null;
 	let closingNotch = false;
+	let expandDoneUnlisten: (() => void) | null = null;
 
 	$effect(() => {
 		const artwork = capsuleArtwork;
@@ -266,11 +240,6 @@
 		invoke('set_notch_expanded', { expanded }).catch(() => {});
 	}
 
-	const easeOutCubic = (t: number) => {
-		const inv = 1 - t;
-		return 1 - inv * inv * inv;
-	};
-
 	const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 	const round = (value: number) => Math.round(value * 100) / 100;
 	const toPx = (value: number) => `${round(value)}px`;
@@ -280,89 +249,6 @@
 	const notchMaskSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 127 20" preserveAspectRatio="none"><path d="${notchPathD}" fill="white"/></svg>`;
 	const notchMaskUri = `url("data:image/svg+xml,${encodeURIComponent(notchMaskSvg)}")`;
 	const HOVER_HIT_SLOP = 3;
-
-	async function animateWindowSize(targetWidth: number, targetHeight: number, duration = 280) {
-		if (!windowInstance) return;
-
-		if (cancelWindowResize) {
-			cancelWindowResize();
-			cancelWindowResize = null;
-		}
-
-		const [{ width: physicalWidth, height: physicalHeight }, scale] = await Promise.all([
-			windowInstance.innerSize(),
-			windowInstance.scaleFactor()
-		]);
-
-		const startWidth = physicalWidth / scale;
-		const startHeight = physicalHeight / scale;
-		const deltaWidth = targetWidth - startWidth;
-		const deltaHeight = targetHeight - startHeight;
-
-		if (Math.abs(deltaWidth) < 0.5 && Math.abs(deltaHeight) < 0.5) {
-			await windowInstance
-				.setSize(new LogicalSize(Math.round(targetWidth), Math.round(targetHeight)))
-				.catch(() => {});
-			await moveWindow(Position.TopCenter).catch(() => {});
-			return;
-		}
-
-		await new Promise<void>((resolve) => {
-			const start = performance.now();
-			let frame = 0;
-			let cancelled = false;
-
-			const step = async (ts: number) => {
-				if (!windowInstance || cancelled) {
-					resolve();
-					return;
-				}
-
-				const elapsed = ts - start;
-				const t = Math.min(1, elapsed / duration);
-				const eased = easeOutCubic(t);
-				const nextWidth = Math.round(startWidth + deltaWidth * eased);
-				const nextHeight = Math.round(startHeight + deltaHeight * eased);
-
-				await windowInstance.setSize(new LogicalSize(nextWidth, nextHeight)).catch(() => {});
-				void moveWindow(Position.TopCenter).catch(() => {});
-
-				if (t < 1) {
-					frame = requestAnimationFrame(step);
-				} else {
-					resolve();
-				}
-			};
-
-			cancelWindowResize = () => {
-				cancelled = true;
-				if (frame) cancelAnimationFrame(frame);
-				resolve();
-			};
-
-			frame = requestAnimationFrame(step);
-		});
-
-		await moveWindow(Position.TopCenter).catch(() => {});
-		cancelWindowResize = null;
-	}
-
-	async function resizeWindow(expanded: boolean) {
-		if (!windowInstance) return;
-
-		await windowInstance.setResizable(true);
-
-		if (expanded) {
-			await animateWindowSize(EXPANDED_WIDTH, EXPANDED_HEIGHT, 280);
-			await moveWindow(Position.TopCenter);
-		} else {
-			// Use sync resize for collapse
-			const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
-			await windowInstance.setSize(new LogicalSize(targetWidth, notchHeight));
-			await moveWindow(Position.TopCenter);
-			await windowInstance.setResizable(false);
-		}
-	}
 
 	let unlisten: (() => void) | null = null;
 
@@ -485,11 +371,28 @@
 		notchExpanded = true;
 		capsuleFadingOut = false;
 
-		// Fire-and-forget native resize - don't block DOM animation
-		resizeWindow(true)
-			.then(() => updateCapsuleFocus(true))
-			.catch((err) => console.warn('Window resize error:', err))
-			.finally(() => syncNativeExpanded(true));
+		try {
+			// Request native expansion (non-blocking)
+			invoke('native_expand', { width: EXPANDED_WIDTH, height: EXPANDED_HEIGHT }).catch(() => {});
+			// Start DOM animation for content immediately
+			requestAnimationFrame(() => expandedEl && animateExpandIn(expandedEl));
+			// Show content after native animation completes
+			if (expandDoneUnlisten) {
+				expandDoneUnlisten();
+				expandDoneUnlisten = null;
+			}
+			expandDoneUnlisten = await listen<{ phase: string }>(
+				'notch-native-anim-end',
+				({ payload }) => {
+					if (payload?.phase === 'expand') {
+						showCapsuleContent = true;
+					}
+				}
+			);
+		} catch {
+			// Fallback if native animation fails
+			showCapsuleContent = true;
+		}
 
 		// DOM animation starts immediately without waiting for native resize
 		await tick();
@@ -524,13 +427,34 @@
 				return;
 			}
 
+			// Request native collapse
+			const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
+			try {
+				invoke('native_collapse', { width: targetWidth, height: notchHeight }).catch(() => {});
+				if (expandDoneUnlisten) {
+					expandDoneUnlisten();
+					expandDoneUnlisten = null;
+				}
+				expandDoneUnlisten = await listen<{ phase: string }>(
+					'notch-native-anim-end',
+					({ payload }) => {
+						if (payload?.phase === 'collapse') {
+							notchExpanded = false;
+							closingNotch = false;
+							showCapsuleContent = true;
+						}
+					}
+				);
+			} catch {
+				// Fallback if native animation fails
+				notchExpanded = false;
+				closingNotch = false;
+				showCapsuleContent = true;
+			}
+
 			// Change state first
 			notchExpanded = false;
 			pointerInExpanded = false;
-
-			// Now resize window synchronously to prevent gaps
-			const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
-			await resizeWindowSync(targetWidth, notchHeight);
 
 			syncNativeExpanded(false);
 			await updateCapsuleFocus(false);
@@ -545,27 +469,6 @@
 		} finally {
 			capsuleFadingOut = false;
 			closingNotch = false;
-		}
-	}
-
-	// Synchronous resize for collapse to prevent gaps
-	async function resizeWindowSync(width: number, height: number) {
-		if (!windowInstance) return;
-
-		try {
-			await windowInstance.setResizable(true);
-			const logicalWidth = Math.round(width);
-			const logicalHeight = Math.round(height);
-			await windowInstance.setSize(new LogicalSize(logicalWidth, logicalHeight));
-			await moveWindow(Position.TopCenter);
-		} catch (error) {
-			console.error('Error resizing window:', error);
-		} finally {
-			try {
-				await windowInstance.setResizable(false);
-			} catch (lockError) {
-				console.error('Error locking window size:', lockError);
-			}
 		}
 	}
 
@@ -715,7 +618,7 @@
 				lastCapsuleTrackId = '';
 			}
 			return isPlaying;
-		} catch (error) {
+		} catch {
 			capsuleMedia = null;
 			capsuleArtwork = null;
 			lastCapsuleTrackId = '';
@@ -738,6 +641,7 @@
 		let dims: NotchDimensions | null = null;
 		try {
 			dims = (await invoke('get_notch_dimensions')) as NotchDimensions | null;
+			// eslint-disable-next-line no-empty
 		} catch {}
 		if (dims && dims.width_pts > 0 && dims.top_inset_pts > 0) {
 			// Extend the capsule width beyond the actual notch for better visibility
@@ -787,6 +691,10 @@
 
 	onDestroy(() => {
 		if (unlisten) unlisten();
+		if (expandDoneUnlisten) {
+			expandDoneUnlisten();
+			expandDoneUnlisten = null;
+		}
 		clearMediaPoll();
 		window.removeEventListener('pointermove', updatePointerState);
 		window.removeEventListener('pointerleave', handlePointerLeave);
@@ -844,12 +752,11 @@
 		</div>
 	{:else}
 		{#key capsuleRenderKey}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="capsule rounded-tab"
 				bind:this={capsuleEl}
 				style={`width:${toPx(capsuleMedia?.is_playing ? notchWidth : notchWidthNormal)}; height:${toPx(notchHeight)}; --notch-mask:${notchMaskUri};`}
-				onpointerenter={(e) => {
+				onpointerenter={() => {
 					manualHold = true;
 					if (capsuleEl) animateCapsuleHoverIn(capsuleEl);
 					void openNotch();

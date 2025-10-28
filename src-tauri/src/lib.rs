@@ -1,5 +1,8 @@
 // macOS-only imports
 #[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "macos")]
 #[allow(unused_imports)]
 
 
@@ -617,6 +620,41 @@ fn media_seek(_position: f64) -> bool {
     false
 }
 
+// Native animation commands
+#[tauri::command]
+async fn native_expand(window: tauri::Window, app: tauri::AppHandle, width: f64, height: f64) {
+    #[cfg(target_os = "macos")]
+    {
+        macos::native_anim::animate_window_to(&app, &window, width, height, 0.28, "expand");
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Fallback: just set size quickly
+        let _ = window.set_size(tauri::LogicalSize { width, height });
+        let _ = app.emit_all(
+            "notch-native-anim-end",
+            serde_json::json!({"phase": "expand"}),
+        );
+    }
+}
+
+#[tauri::command]
+async fn native_collapse(window: tauri::Window, app: tauri::AppHandle, width: f64, height: f64) {
+    #[cfg(target_os = "macos")]
+    {
+        macos::native_anim::animate_window_to(&app, &window, width, height, 0.24, "collapse");
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.set_size(tauri::LogicalSize { width, height });
+        let _ = app.emit_all(
+            "notch-native-anim-end",
+            serde_json::json!({"phase": "collapse"}),
+        );
+    }
+}
+
+
 #[cfg(target_os = "macos")]
 fn handle_mouse_move<F>(
     st: &Arc<Mutex<(bool, Instant)>>,
@@ -746,7 +784,9 @@ pub fn run() {
             media_play_pause,
             media_next_track,
             media_previous_track,
-            media_seek
+            media_seek,
+            native_expand,
+            native_collapse
         ])
         .setup(|app| {
             #[cfg(desktop)]
