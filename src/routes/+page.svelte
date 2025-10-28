@@ -250,7 +250,7 @@
     const notchPathD = 'M120 4C120 1.79086 121.791 0 124 0H127V0H0V0H3C5.20914 0 7 1.79086 7 4V14C7 17.3137 9.68629 20 13 20H114C117.314 20 120 17.3137 120 14V4Z';
     const notchMaskSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 127 20" preserveAspectRatio="none"><path d="${notchPathD}" fill="white"/></svg>`;
     const notchMaskUri = `url("data:image/svg+xml,${encodeURIComponent(notchMaskSvg)}")`;
-    const HOVER_HIT_SLOP = 12;
+    const HOVER_HIT_SLOP = 3;
 
   async function animateWindowSize(targetWidth: number, targetHeight: number, duration = 280) {
       if (!windowInstance) return;
@@ -701,7 +701,7 @@
       // Extend the capsule width beyond the actual notch for better visibility
       notchWidth  = Math.round(dims.width_pts * 1.5); // 50% wider when playing
       notchWidthNormal = Math.round(dims.width_pts * 0.9); // Normal width when not playing
-      notchHeight = Math.round(dims.top_inset_pts) + 3; // Match notch height + small buffer
+      notchHeight = Math.round(dims.top_inset_pts); // Match notch height + small buffer
     } else {
       // Fallback to wider default
       notchWidth = 420;
