@@ -208,6 +208,7 @@
 	let windowInstance: TauriWindow | null = null;
 	let cancelWindowResize: (() => void) | null = null;
 	let closingNotch = false;
+	let expandDoneUnlisten: (() => void) | null = null;
 
 	$effect(() => {
 		const artwork = capsuleArtwork;
@@ -485,11 +486,30 @@
 		notchExpanded = true;
 		capsuleFadingOut = false;
 
-		// Fire-and-forget native resize - don't block DOM animation
-		resizeWindow(true)
-			.then(() => updateCapsuleFocus(true))
-			.catch((err) => console.warn('Window resize error:', err))
-			.finally(() => syncNativeExpanded(true));
+		try {
+			// Request native expansion (non-blocking)
+			invoke('native_expand', { width: EXPANDED_WIDTH, height: EXPANDED_HEIGHT }).catch(
+				() => {}
+			);
+			// Start DOM animation for content immediately
+			requestAnimationFrame(() => expandedEl && animateExpandIn(expandedEl));
+			// Show content after native animation completes
+			if (expandDoneUnlisten) {
+				expandDoneUnlisten();
+				expandDoneUnlisten = null;
+			}
+			expandDoneUnlisten = await listen<{ phase: string }>(
+				'notch-native-anim-end',
+				({ payload }) => {
+					if (payload?.phase === 'expand') {
+						showCapsuleContent = true;
+					}
+				}
+			);
+		} catch {
+			// Fallback if native animation fails
+			showCapsuleContent = true;
+		}
 
 		// DOM animation starts immediately without waiting for native resize
 		await tick();
@@ -524,13 +544,34 @@
 				return;
 			}
 
+			// Request native collapse
+			const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
+			try {
+				invoke('native_collapse', { width: targetWidth, height: notchHeight }).catch(() => {});
+				if (expandDoneUnlisten) {
+					expandDoneUnlisten();
+					expandDoneUnlisten = null;
+				}
+				expandDoneUnlisten = await listen<{ phase: string }>(
+					'notch-native-anim-end',
+					({ payload }) => {
+						if (payload?.phase === 'collapse') {
+							notchExpanded = false;
+							closingNotch = false;
+							showCapsuleContent = true;
+						}
+					}
+				);
+			} catch {
+				// Fallback if native animation fails
+				notchExpanded = false;
+				closingNotch = false;
+				showCapsuleContent = true;
+			}
+
 			// Change state first
 			notchExpanded = false;
 			pointerInExpanded = false;
-
-			// Now resize window synchronously to prevent gaps
-			const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
-			await resizeWindowSync(targetWidth, notchHeight);
 
 			syncNativeExpanded(false);
 			await updateCapsuleFocus(false);
@@ -787,6 +828,10 @@
 
 	onDestroy(() => {
 		if (unlisten) unlisten();
+		if (expandDoneUnlisten) {
+			expandDoneUnlisten();
+			expandDoneUnlisten = null;
+		}
 		clearMediaPoll();
 		window.removeEventListener('pointermove', updatePointerState);
 		window.removeEventListener('pointerleave', handlePointerLeave);
