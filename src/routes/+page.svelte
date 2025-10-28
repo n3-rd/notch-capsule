@@ -42,6 +42,12 @@
 	let capsuleAnime: JSAnimation | null = null;
 	let capsuleHoverAnime: JSAnimation | null = null;
 
+	// Animation duration constants for synchronization
+	const EXPAND_IN_DURATION = 320;
+	const EXPAND_OUT_DURATION = 220;
+	const CAPSULE_IN_DURATION = 240;
+	const CAPSULE_OUT_DURATION = 120;
+
 	function animateExpandIn(node: HTMLElement) {
 		if (expandedAnime) {
 			expandedAnime.pause();
@@ -61,7 +67,7 @@
 				scale: [0.92, 1],
 				translateY: ['-2px', '0px'],
 				opacity: [0, 1],
-				duration: 320,
+				duration: EXPAND_IN_DURATION,
 				delay: 0,
 				ease: 'spring(1, 90, 10, 0)',
 				composition: 'replace',
@@ -89,7 +95,7 @@
 				scale: [1, 0.92],
 				translateY: ['0px', '-4px'],
 				opacity: [currentOpacity, 0],
-				duration: 220,
+				duration: EXPAND_OUT_DURATION,
 				delay: 0,
 				ease: 'in(2.5)',
 				composition: 'replace',
@@ -117,7 +123,7 @@
 			capsuleAnime = animate(node, {
 				opacity: [0, 1],
 				scale: [0.96, 1],
-				duration: 240,
+				duration: CAPSULE_IN_DURATION,
 				delay: 180,
 				ease: 'spring(1, 70, 10, 0)',
 				composition: 'replace',
@@ -143,7 +149,8 @@
 
 			capsuleAnime = animate(node, {
 				opacity: [currentOpacity, 0],
-				duration: 120,
+				// Note: scale animation removed for GPU optimization (transform-only)
+				duration: CAPSULE_OUT_DURATION,
 				ease: 'inOut(2)',
 				composition: 'replace',
 				complete: () => {
@@ -507,7 +514,7 @@
 			}
 
 			// Wait for DOM animation to complete
-			await wait(220);
+			await wait(EXPAND_OUT_DURATION);
 
 			if (DEV_KEEP_NOTCH_EXPANDED || manualHold || pointerInExpanded) {
 				if (expandedEl) {
