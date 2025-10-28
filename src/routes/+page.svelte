@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { animate, type JSAnimation } from 'animejs';
 	import { getCurrentWindow, Window as TauriWindow, LogicalSize } from '@tauri-apps/api/window';
 	import { moveWindow, Position } from '@tauri-apps/plugin-positioner';
@@ -48,6 +48,9 @@
 			expandedAnime = null;
 		}
 
+		// Set will-change for GPU optimization
+		node.style.willChange = 'transform, opacity';
+
 		// Set initial state for morph
 		node.style.opacity = '0';
 		node.style.transform = 'scale(0.92)';
@@ -58,11 +61,14 @@
 				scale: [0.92, 1],
 				translateY: ['-2px', '0px'],
 				opacity: [0, 1],
-				blur: ['4px', '0px'],
-				duration: 380,
+				duration: 320,
 				delay: 0,
-				ease: 'spring(1, 80, 10, 0)',
-				composition: 'replace'
+				ease: 'spring(1, 90, 10, 0)',
+				composition: 'replace',
+				complete: () => {
+					// Clear will-change after animation completes
+					node.style.willChange = 'auto';
+				}
 			});
 		});
 	}
@@ -73,18 +79,24 @@
 			expandedAnime = null;
 		}
 
+		// Set will-change for GPU optimization
+		node.style.willChange = 'transform, opacity';
+
 		requestAnimationFrame(() => {
 			const currentOpacity = parseFloat(window.getComputedStyle(node).opacity) || 1;
 
 			expandedAnime = animate(node, {
-				scale: [1, 0.88],
-				translateY: ['0px', '-8px'],
+				scale: [1, 0.92],
+				translateY: ['0px', '-4px'],
 				opacity: [currentOpacity, 0],
-				blur: ['0px', '10px'],
-				duration: 260,
-				delay: 50,
-				ease: 'in(3)',
-				composition: 'replace'
+				duration: 220,
+				delay: 0,
+				ease: 'in(2.5)',
+				composition: 'replace',
+				complete: () => {
+					// Clear will-change after animation completes
+					node.style.willChange = 'auto';
+				}
 			});
 		});
 	}
@@ -95,6 +107,9 @@
 			capsuleAnime = null;
 		}
 
+		// Set will-change for GPU optimization
+		node.style.willChange = 'transform, opacity';
+
 		// Set initial state
 		node.style.opacity = '0';
 
@@ -102,10 +117,14 @@
 			capsuleAnime = animate(node, {
 				opacity: [0, 1],
 				scale: [0.96, 1],
-				duration: 280,
-				delay: 200,
-				ease: 'spring(1, 60, 10, 0)',
-				composition: 'replace'
+				duration: 240,
+				delay: 180,
+				ease: 'spring(1, 70, 10, 0)',
+				composition: 'replace',
+				complete: () => {
+					// Clear will-change after animation completes
+					node.style.willChange = 'auto';
+				}
 			});
 		});
 	}
@@ -116,15 +135,21 @@
 			capsuleAnime = null;
 		}
 
+		// Set will-change for GPU optimization
+		node.style.willChange = 'transform, opacity';
+
 		requestAnimationFrame(() => {
 			const currentOpacity = parseFloat(window.getComputedStyle(node).opacity) || 1;
 
 			capsuleAnime = animate(node, {
 				opacity: [currentOpacity, 0],
-				scale: [1, 1.02],
-				duration: 80,
+				duration: 120,
 				ease: 'inOut(2)',
-				composition: 'replace'
+				composition: 'replace',
+				complete: () => {
+					// Clear will-change after animation completes
+					node.style.willChange = 'auto';
+				}
 			});
 		});
 	}
@@ -453,12 +478,14 @@
 		notchExpanded = true;
 		capsuleFadingOut = false;
 
-		try {
-			await resizeWindow(true);
-			await updateCapsuleFocus(true);
-		} finally {
-			syncNativeExpanded(true);
-		}
+		// Fire-and-forget native resize - don't block DOM animation
+		resizeWindow(true)
+			.then(() => updateCapsuleFocus(true))
+			.catch((err) => console.warn('Window resize error:', err))
+			.finally(() => syncNativeExpanded(true));
+
+		// DOM animation starts immediately without waiting for native resize
+		await tick();
 	}
 
 	async function closeNotch() {
@@ -474,11 +501,13 @@
 			// Hide capsule content during collapse
 			showCapsuleContent = false;
 
+			// Start DOM collapse animation first
 			if (expandedEl) {
 				animateExpandOut(expandedEl);
 			}
 
-			await wait(280);
+			// Wait for DOM animation to complete
+			await wait(220);
 
 			if (DEV_KEEP_NOTCH_EXPANDED || manualHold || pointerInExpanded) {
 				if (expandedEl) {
@@ -492,7 +521,7 @@
 			notchExpanded = false;
 			pointerInExpanded = false;
 
-			// Resize window
+			// Now resize window synchronously to prevent gaps
 			const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
 			await resizeWindowSync(targetWidth, notchHeight);
 
@@ -500,11 +529,11 @@
 			await updateCapsuleFocus(false);
 
 			// Force complete re-render with new key
-			await wait(30);
+			await tick();
 			capsuleRenderKey++;
 
 			// Show capsule content after re-render
-			await wait(20);
+			await tick();
 			showCapsuleContent = true;
 		} finally {
 			capsuleFadingOut = false;
@@ -912,7 +941,6 @@
 		transform: translate3d(0, 0, 0);
 		backface-visibility: hidden;
 		perspective: 1000px;
-		will-change: transform, opacity, width;
 		contain: layout style paint;
 		/* Force GPU layer */
 		isolation: isolate;
@@ -952,8 +980,8 @@
 		-webkit-mask-position: center;
 		mask-position: center;
 
-		/* Allow anime.js to control all animations */
-		will-change: transform, opacity, filter;
+		/* GPU-optimized properties only - no blur/filter */
+		will-change: transform, opacity;
 
 		/* Maximum hardware acceleration for 120fps on ProMotion displays */
 		transform: translate3d(0, 0, 0);
