@@ -716,12 +716,15 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
             }
         }
         let f = frame?;
-        // tune these to your capsule size
+        // Hover zone sized to match the actual capsule
         let expanded = expanded_flag_for_zone.load(Ordering::Relaxed);
         let (zone_w, zone_h) = if expanded {
-            (700.0, 200.0)
+            // Expanded state: generous zone to allow clicking controls without closing
+            // Covers the full expanded area (700x200) plus comfortable margins
+            (800.0, 280.0)
         } else {
-            (460.0, 50.0) // Wider hover zone to match expanded capsule
+            // Collapsed state: tight zone matching the capsule itself
+            (250.0, 50.0)
         };
         let x = f.origin.x + (f.size.width - zone_w) * 0.5;
         let y = f.origin.y + f.size.height - zone_h;
