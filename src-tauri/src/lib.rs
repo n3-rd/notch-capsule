@@ -1,7 +1,7 @@
 // macOS-only imports
 #[cfg(target_os = "macos")]
 #[allow(unused_imports)]
-
+mod macos;
 
 #[cfg(all(desktop, target_os = "macos"))]
 use tauri::Manager;
@@ -733,6 +733,48 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
     });
 }
 
+// Native mask animation commands
+#[tauri::command]
+async fn notch_attach(
+    window: tauri::Window,
+    app: tauri::AppHandle,
+    _label: String,
+    closed_w: f64,
+    closed_h: f64,
+    expanded_w: f64,
+    expanded_h: f64,
+    corner: f64,
+) {
+    #[cfg(target_os = "macos")]
+    {
+        macos::native_mask::attach_animator(&app, &window, closed_w, closed_h, expanded_w, expanded_h, corner);
+    }
+}
+
+#[tauri::command]
+async fn notch_expand(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        macos::native_mask::expand(&app);
+    }
+}
+
+#[tauri::command]
+async fn notch_collapse(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        macos::native_mask::collapse(&app);
+    }
+}
+
+#[tauri::command]
+async fn notch_set_progress(progress: f64) {
+    #[cfg(target_os = "macos")]
+    {
+        macos::native_mask::set_progress(progress);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -746,7 +788,11 @@ pub fn run() {
             media_play_pause,
             media_next_track,
             media_previous_track,
-            media_seek
+            media_seek,
+            notch_attach,
+            notch_expand,
+            notch_collapse,
+            notch_set_progress
         ])
         .setup(|app| {
             #[cfg(desktop)]

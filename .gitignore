@@ -21,3 +21,7 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Swift build artifacts
+src-tauri/swift/.build
+src-tauri/swift/.swiftpm
