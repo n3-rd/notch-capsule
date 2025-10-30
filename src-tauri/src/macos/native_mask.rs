@@ -5,6 +5,7 @@ use cocoa::foundation::{NSPoint, NSRect, NSSize};
 use objc::{msg_send, sel, sel_impl, class};
 use tauri::{AppHandle, Emitter, Manager, Window};
 use std::sync::Mutex;
+use std::os::raw::{c_char, c_int, c_void};
 
 // Wrapper to make id Send-safe (safe because we only access on main thread)
 struct SendId(Option<id>);
@@ -33,29 +34,62 @@ pub fn attach_animator(
         
         // Explicitly load the Swift framework dylib
         use std::ffi::CString;
+        use std::env;
         
-        // Try multiple paths to find the dylib
-        let paths = vec![
-            "@executable_path/libNotchCapsuleKit.dylib",
-            "@executable_path/../../../target/debug/libNotchCapsuleKit.dylib",
-            "@executable_path/../../../target/release/libNotchCapsuleKit.dylib",
-            "libNotchCapsuleKit.dylib", // Will search in standard locations
-        ];
+        // Declare dlopen/dlerror from libSystem
+        extern "C" {
+            fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
+            fn dlerror() -> *const c_char;
+        }
+        const RTLD_LAZY: c_int = 0x1;
+        const RTLD_GLOBAL: c_int = 0x8;
+        
+        // Get the actual executable path
+        let exe_path = env::current_exe().ok();
+        let exe_dir = exe_path.as_ref().and_then(|p| p.parent());
+        
+        let mut paths = vec![];
+        
+        // Add paths relative to executable directory
+        if let Some(dir) = exe_dir {
+            paths.push(dir.join("libNotchCapsuleKit.dylib"));
+            // In dev mode, the dylib is in target/debug
+            if let Some(parent) = dir.parent() {
+                paths.push(parent.join("libNotchCapsuleKit.dylib"));
+            }
+        }
+        
+        // Try current working directory
+        if let Ok(cwd) = env::current_dir() {
+            paths.push(cwd.join("target/debug/libNotchCapsuleKit.dylib"));
+            paths.push(cwd.join("target/release/libNotchCapsuleKit.dylib"));
+        }
         
         let mut loaded = false;
-        for path_str in paths {
-            if let Ok(dylib_path) = CString::new(path_str) {
-                let handle = libc::dlopen(dylib_path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL);
-                if !handle.is_null() {
-                    eprintln!("Successfully loaded Swift dylib from: {}", path_str);
-                    loaded = true;
-                    break;
+        for path in paths {
+            if path.exists() {
+                if let Some(path_str) = path.to_str() {
+                    if let Ok(dylib_path) = CString::new(path_str) {
+                        let handle = dlopen(dylib_path.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
+                        if !handle.is_null() {
+                            eprintln!("Successfully loaded Swift dylib from: {}", path_str);
+                            loaded = true;
+                            break;
+                        } else {
+                            let error = dlerror();
+                            if !error.is_null() {
+                                let error_str = std::ffi::CStr::from_ptr(error).to_string_lossy();
+                                eprintln!("Failed to load {}: {}", path_str, error_str);
+                            }
+                        }
+                    }
                 }
             }
         }
         
         if !loaded {
             eprintln!("Warning: Could not explicitly load Swift dylib, relying on linker");
+            eprintln!("Tried paths: {:?}", paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>());
         }
         
         // Load NotchAnimator class from the Swift framework
