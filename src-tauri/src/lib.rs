@@ -658,24 +658,13 @@ fn handle_mouse_move<F>(
     };
 
     let mut lock = st.lock().unwrap();
-    let (was_inside, ts) = *lock;
+    let (was_inside, _ts) = *lock;
     let now = Instant::now();
-    let open_delay = Duration::from_millis(40);
-    let close_delay = Duration::from_millis(120);
 
-    let mut changed = None;
-    if inside && !was_inside && now.duration_since(ts) >= open_delay {
-        *lock = (true, now);
-        changed = Some(true);
-    } else if !inside && was_inside && now.duration_since(ts) >= close_delay {
-        *lock = (false, now);
-        changed = Some(false);
-    } else if inside != was_inside {
-        *lock = (was_inside, now); // not enough time yet
-    }
-
-    if let Some(v) = changed {
-        let _ = app_handle.emit("notch-hover", serde_json::json!({ "inside": v }));
+    // Emit immediately on state change; debouncing is handled in Svelte
+    if inside != was_inside {
+        *lock = (inside, now);
+        let _ = app_handle.emit("notch-hover", serde_json::json!({ "inside": inside }));
     }
 }
 

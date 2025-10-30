@@ -518,6 +518,11 @@
 		showCapsuleContent = false;
 		capsuleFadingOut = true;
 
+		// Animate capsule out before expansion
+		if (capsuleEl) {
+			animateCapsuleOut(capsuleEl);
+		}
+
 		await wait(150);
 
 		if (token !== openIntentToken || notchExpanded) {
@@ -843,12 +848,10 @@
 			await win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_HEIGHT));
 			await moveWindow(Position.TopCenter);
 			syncNativeExpanded(true);
-			await updateCapsuleFocus(true);
 		} else {
 			await win.setSize(new LogicalSize(notchWidth, notchHeight));
 			await moveWindow(Position.TopCenter);
 			syncNativeExpanded(false);
-			await updateCapsuleFocus(false);
 		}
 
 		// Try to attach native mask animator (macOS only)
@@ -888,16 +891,16 @@
 		unlisten = await listen<{ inside: boolean }>('notch-hover', ({ payload }) => {
 			const inside = !!payload?.inside;
 			if (inside) {
+				// Native hover detected - schedule open with debounce
+				manualHold = true;
+				pointerInExpanded = false;
+				scheduleOpenOnHover();
+			} else if (!DEV_KEEP_NOTCH_EXPANDED) {
+				// Native hover exit - schedule close with debounce
 				manualHold = false;
 				pointerInExpanded = false;
-				void openNotch();
-			} else if (!DEV_KEEP_NOTCH_EXPANDED) {
 				cancelScheduledOpen();
-				requestAnimationFrame(() => {
-					if (!(manualHold || pointerInExpanded)) {
-						void closeNotch();
-					}
-				});
+				scheduleCloseOnLeave();
 			}
 		});
 
