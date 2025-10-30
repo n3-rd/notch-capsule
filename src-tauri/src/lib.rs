@@ -664,6 +664,7 @@ fn handle_mouse_move<F>(
     // Emit immediately on state change; debouncing is handled in Svelte
     if inside != was_inside {
         *lock = (inside, now);
+        eprintln!("Mouse hover state changed: inside={}", inside);
         let _ = app_handle.emit("notch-hover", serde_json::json!({ "inside": inside }));
     }
 }
@@ -738,6 +739,7 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
     }
 
     // --- Poller: periodic fallback in case event monitors are blocked (e.g. missing accessibility permission) ---
+    // This poller is the primary hover detection mechanism and runs continuously
     let st_poll = st.clone();
     let app_handle_poll = app.clone();
     let hover_zone_poll = hover_zone.clone();

@@ -890,13 +890,16 @@
 		// Listen for native hover (works even when window not focused)
 		unlisten = await listen<{ inside: boolean }>('notch-hover', ({ payload }) => {
 			const inside = !!payload?.inside;
+			console.log('Native hover event:', inside);
 			if (inside) {
 				// Native hover detected - schedule open with debounce
+				console.log('Scheduling open on hover');
 				manualHold = true;
 				pointerInExpanded = false;
 				scheduleOpenOnHover();
 			} else if (!DEV_KEEP_NOTCH_EXPANDED) {
 				// Native hover exit - schedule close with debounce
+				console.log('Scheduling close on leave');
 				manualHold = false;
 				pointerInExpanded = false;
 				cancelScheduledOpen();
