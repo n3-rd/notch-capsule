@@ -72,7 +72,7 @@
 	async function fetchArtwork() {
 		try {
 			const artwork = await invoke<string | null>('get_media_artwork');
-			if (artwork && artwork.startsWith('http')) {
+			if (artwork && (artwork.startsWith('http') || artwork.startsWith('data:image'))) {
 				artworkUrl = artwork;
 			} else {
 				artworkUrl = null;

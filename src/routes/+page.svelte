@@ -37,6 +37,9 @@
 	const MEDIA_POLL_ACTIVE_MS = 1200;
 	const MEDIA_POLL_IDLE_MS = 4000;
 
+	// Track if native mask animator is attached (macOS only)
+	let nativeAnimatorAttached = $state(false);
+
 	// Ultra-smooth Anime.js animations with spring physics
 	let expandedAnime: JSAnimation | null = null;
 	let capsuleAnime: JSAnimation | null = null;
@@ -365,6 +368,7 @@
 	}
 
 	let unlisten: (() => void) | null = null;
+	let unlistenNative: (() => void) | null = null;
 
 	function isWithinRect(rect: DOMRect, x: number, y: number, padding = 0) {
 		return (
@@ -463,9 +467,6 @@
 			hasPendingOpen = false;
 			capsuleFadingOut = false;
 			showCapsuleContent = true;
-			if (notchExpanded) {
-				await updateCapsuleFocus(true);
-			}
 			return;
 		}
 
@@ -485,14 +486,29 @@
 		notchExpanded = true;
 		capsuleFadingOut = false;
 
-		// Fire-and-forget native resize - don't block DOM animation
-		resizeWindow(true)
-			.then(() => updateCapsuleFocus(true))
-			.catch((err) => console.warn('Window resize error:', err))
-			.finally(() => syncNativeExpanded(true));
+		// Use native animator if available (macOS), otherwise fallback to window resize
+		if (nativeAnimatorAttached) {
+			// Native animation - just call the command, no window resizing
+			// Don't call updateCapsuleFocus - keep window non-activating for hover to work
+			try {
+				await invoke('notch_expand');
+				// Show content immediately since native animation handles the mask
+				showCapsuleContent = true;
+			} catch (err) {
+				console.warn('Native expand error:', err);
+				// Fallback to showing content immediately
+				showCapsuleContent = true;
+			}
+		} else {
+			// Fallback: Fire-and-forget window resize - don't block DOM animation
+			resizeWindow(true)
+				.then(() => updateCapsuleFocus(true))
+				.catch((err) => console.warn('Window resize error:', err))
+				.finally(() => syncNativeExpanded(true));
 
-		// DOM animation starts immediately without waiting for native resize
-		await tick();
+			// DOM animation starts immediately without waiting for native resize
+			await tick();
+		}
 	}
 
 	async function closeNotch() {
@@ -528,20 +544,36 @@
 			notchExpanded = false;
 			pointerInExpanded = false;
 
-			// Now resize window synchronously to prevent gaps
-			const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
-			await resizeWindowSync(targetWidth, notchHeight);
+			// Use native animator if available (macOS), otherwise fallback to window resize
+			if (nativeAnimatorAttached) {
+				// Native animation - just call the command, no window resizing
+				// Don't call updateCapsuleFocus - keep window non-activating for hover to work
+				try {
+					await invoke('notch_collapse');
+					// Content will be shown when native animation completes (notch-native-anim-end event)
+				} catch (err) {
+					console.warn('Native collapse error:', err);
+					// Fallback
+					capsuleRenderKey++;
+					await tick();
+					showCapsuleContent = true;
+				}
+			} else {
+				// Fallback: resize window synchronously to prevent gaps
+				const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
+				await resizeWindowSync(targetWidth, notchHeight);
 
-			syncNativeExpanded(false);
-			await updateCapsuleFocus(false);
+				syncNativeExpanded(false);
+				await updateCapsuleFocus(false);
 
-			// Force complete re-render with new key
-			await tick();
-			capsuleRenderKey++;
+				// Force complete re-render with new key
+				await tick();
+				capsuleRenderKey++;
 
-			// Show capsule content after re-render
-			await tick();
-			showCapsuleContent = true;
+				// Show capsule content after re-render
+				await tick();
+				showCapsuleContent = true;
+			}
 		} finally {
 			capsuleFadingOut = false;
 			closingNotch = false;
@@ -704,7 +736,10 @@
 				if (isNewTrack || !capsuleArtwork) {
 					lastCapsuleTrackId = currentTrackId;
 					const artwork = await invoke<string | null>('get_media_artwork');
-					if (artwork && artwork.startsWith('http')) {
+					if (
+						artwork &&
+						(artwork.startsWith('http') || artwork.startsWith('data:image'))
+					) {
 						capsuleArtwork = artwork;
 					} else {
 						capsuleArtwork = null;
@@ -725,7 +760,20 @@
 		}
 	}
 
+	async function ensureAccessibilityPermissions() {
+		try {
+			const trusted = await invoke<boolean>('ensure_accessibility', { prompt: false });
+			if (!trusted) {
+				await invoke<boolean>('ensure_accessibility', { prompt: true });
+			}
+		} catch (error) {
+			console.warn('Accessibility permission check failed:', error);
+		}
+	}
+
 	onMount(async () => {
+		void ensureAccessibilityPermissions();
+
 		const win = (await TauriWindow.getByLabel('notch-capsule')) ?? getCurrentWindow();
 		windowInstance = win;
 
@@ -763,6 +811,39 @@
 			await updateCapsuleFocus(false);
 		}
 
+		// Try to attach native mask animator (macOS only)
+		try {
+			const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
+			await invoke('notch_attach', {
+				label: 'notch-capsule',
+				closedW: targetWidth,
+				closedH: notchHeight,
+				expandedW: EXPANDED_WIDTH,
+				expandedH: EXPANDED_HEIGHT,
+				corner: 14
+			});
+			nativeAnimatorAttached = true;
+			console.log('Native mask animator attached');
+		} catch (err) {
+			console.log('Native animator not available (non-macOS or error):', err);
+			nativeAnimatorAttached = false;
+		}
+
+		// Listen for native animation completion events
+		unlistenNative = await listen<{ phase: string }>('notch-native-anim-end', ({ payload }) => {
+			console.log('Native animation ended:', payload.phase);
+			if (payload.phase === 'expand') {
+				// Animation complete, ensure content is visible
+				showCapsuleContent = true;
+			} else if (payload.phase === 'collapse') {
+				// Animation complete, re-render capsule and show content
+				capsuleRenderKey++;
+				tick().then(() => {
+					showCapsuleContent = true;
+				});
+			}
+		});
+
 		// Listen for native hover (works even when window not focused)
 		unlisten = await listen<{ inside: boolean }>('notch-hover', ({ payload }) => {
 			const inside = !!payload?.inside;
@@ -787,6 +868,7 @@
 
 	onDestroy(() => {
 		if (unlisten) unlisten();
+		if (unlistenNative) unlistenNative();
 		clearMediaPoll();
 		window.removeEventListener('pointermove', updatePointerState);
 		window.removeEventListener('pointerleave', handlePointerLeave);
