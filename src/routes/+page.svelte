@@ -37,6 +37,14 @@
 	const MEDIA_POLL_ACTIVE_MS = 1200;
 	const MEDIA_POLL_IDLE_MS = 4000;
 
+	// Hover timing constants matching Boring Notch behavior
+	const MIN_HOVER_DURATION = 300; // ms - delay before opening on hover
+	const LEAVE_DEBOUNCE = 100; // ms - debounce before closing on leave
+
+	// Hover scheduling state
+	let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null;
+	let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// Track if native mask animator is attached (macOS only)
 	let nativeAnimatorAttached = $state(false);
 
@@ -380,12 +388,47 @@
 	}
 
 	function cancelScheduledOpen() {
+		if (hoverOpenTimer) {
+			clearTimeout(hoverOpenTimer);
+			hoverOpenTimer = null;
+		}
 		if (hasPendingOpen) {
 			hasPendingOpen = false;
 			capsuleFadingOut = false;
 			showCapsuleContent = true;
 		}
 		openIntentToken++;
+	}
+
+	function cancelScheduledClose() {
+		if (hoverCloseTimer) {
+			clearTimeout(hoverCloseTimer);
+			hoverCloseTimer = null;
+		}
+	}
+
+	function scheduleOpenOnHover() {
+		if (DEV_KEEP_NOTCH_EXPANDED) return;
+
+		cancelScheduledOpen();
+		hoverOpenTimer = setTimeout(() => {
+			hoverOpenTimer = null;
+			if (manualHold && !notchExpanded) {
+				void openNotch();
+			}
+		}, MIN_HOVER_DURATION);
+	}
+
+	function scheduleCloseOnLeave() {
+		if (DEV_KEEP_NOTCH_EXPANDED) return;
+
+		cancelScheduledClose();
+		hoverCloseTimer = setTimeout(() => {
+			hoverCloseTimer = null;
+			if (!manualHold && !pointerInExpanded) {
+				void closeNotch();
+			}
+		}, LEAVE_DEBOUNCE);
 	}
 
 	async function updateCapsuleFocus(focused: boolean) {
@@ -736,10 +779,7 @@
 				if (isNewTrack || !capsuleArtwork) {
 					lastCapsuleTrackId = currentTrackId;
 					const artwork = await invoke<string | null>('get_media_artwork');
-					if (
-						artwork &&
-						(artwork.startsWith('http') || artwork.startsWith('data:image'))
-					) {
+					if (artwork && (artwork.startsWith('http') || artwork.startsWith('data:image'))) {
 						capsuleArtwork = artwork;
 					} else {
 						capsuleArtwork = null;
@@ -870,6 +910,8 @@
 		if (unlisten) unlisten();
 		if (unlistenNative) unlistenNative();
 		clearMediaPoll();
+		cancelScheduledOpen();
+		cancelScheduledClose();
 		window.removeEventListener('pointermove', updatePointerState);
 		window.removeEventListener('pointerleave', handlePointerLeave);
 		if (cancelWindowResize) {
@@ -911,15 +953,18 @@
 			bind:this={expandedEl}
 			style={`--notch-mask:${notchMaskUri};`}
 			onmouseenter={() => {
+				if (DEV_KEEP_NOTCH_EXPANDED) return;
 				manualHold = true;
 				pointerInExpanded = true;
+				cancelScheduledClose();
 				void openNotch();
 			}}
 			onmouseleave={() => {
+				if (DEV_KEEP_NOTCH_EXPANDED) return;
 				manualHold = false;
 				pointerInExpanded = false;
 				cancelScheduledOpen();
-				void closeNotch();
+				scheduleCloseOnLeave();
 			}}
 		>
 			<NotchExpanded />
@@ -931,19 +976,19 @@
 				class="capsule rounded-tab"
 				bind:this={capsuleEl}
 				style={`width:${toPx(capsuleMedia?.is_playing ? notchWidth : notchWidthNormal)}; height:${toPx(notchHeight)}; --notch-mask:${notchMaskUri};`}
-				onpointerenter={(e) => {
+				onpointerenter={() => {
+					if (DEV_KEEP_NOTCH_EXPANDED) return;
 					manualHold = true;
 					if (capsuleEl) animateCapsuleHoverIn(capsuleEl);
-					void openNotch();
+					scheduleOpenOnHover();
 				}}
 				onpointerleave={() => {
+					if (DEV_KEEP_NOTCH_EXPANDED) return;
 					manualHold = false;
 					pointerInExpanded = false;
 					if (capsuleEl) animateCapsuleHoverOut(capsuleEl);
 					cancelScheduledOpen();
-					if (!DEV_KEEP_NOTCH_EXPANDED) {
-						void closeNotch();
-					}
+					scheduleCloseOnLeave();
 				}}
 			>
 				{#if capsuleMedia?.is_playing}

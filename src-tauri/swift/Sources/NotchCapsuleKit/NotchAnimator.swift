@@ -13,6 +13,13 @@ import QuartzCore
     private var closedRect: CGRect = .zero
     private var expandedRect: CGRect = .zero
     private var corner: CGFloat = 12
+    
+    // Animation timing matching Boring Notch feel
+    // Reference: https://github.com/TheBoredTeam/boring.notch
+    private let expandDuration: CFTimeInterval = 0.40  // Spring/bouncy feel for expand
+    private let collapseDuration: CFTimeInterval = 0.30 // Smooth feel for collapse
+    private let expandTimingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.2, 1.0) // Bouncy
+    private let collapseTimingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0) // Smooth
 
     @objc public func attach(to window: NSWindow, closedRect: CGRect, expandedRect: CGRect, corner: CGFloat) {
         self.window = window
@@ -42,20 +49,20 @@ import QuartzCore
     }
 
     @objc public func expand(duration: CFTimeInterval, appHandle: UnsafeMutableRawPointer?) {
-        animate(to: 1.0, duration: duration)
-        notifyEnd(phase: .expand, after: duration, appHandle: appHandle)
+        animate(to: 1.0, duration: expandDuration, timingFunction: expandTimingFunction)
+        notifyEnd(phase: .expand, after: expandDuration, appHandle: appHandle)
     }
 
     @objc public func collapse(duration: CFTimeInterval, appHandle: UnsafeMutableRawPointer?) {
-        animate(to: 0.0, duration: duration)
-        notifyEnd(phase: .collapse, after: duration, appHandle: appHandle)
+        animate(to: 0.0, duration: collapseDuration, timingFunction: collapseTimingFunction)
+        notifyEnd(phase: .collapse, after: collapseDuration, appHandle: appHandle)
     }
 
     @objc public func setProgress(_ p: CGFloat) { 
         updatePath(progress: max(0, min(1, p))) 
     }
 
-    private func animate(to target: CGFloat, duration: CFTimeInterval) {
+    private func animate(to target: CGFloat, duration: CFTimeInterval, timingFunction: CAMediaTimingFunction) {
         guard let contentView = window?.contentView else { return }
         contentView.layoutSubtreeIfNeeded()
 
@@ -68,7 +75,7 @@ import QuartzCore
         anim.fromValue = fromPath
         anim.toValue = toPath
         anim.duration = duration
-        anim.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.2, 1.0)
+        anim.timingFunction = timingFunction
         maskLayer.add(anim, forKey: "path")
     }
 

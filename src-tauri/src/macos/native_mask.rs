@@ -67,6 +67,8 @@ pub fn expand(app: &AppHandle) {
     if let Ok(guard) = ANIMATOR.lock() {
         if let Some(animator) = guard.0 {
             unsafe {
+                // Duration parameter is passed but overridden by Swift constants
+                // matching Boring Notch animation timing
                 let duration: f64 = 0.30;
                 let app_ptr = app as *const _ as *mut std::ffi::c_void;
                 let _: () = msg_send![animator, expandWithDuration:duration appHandle:app_ptr];
@@ -79,6 +81,8 @@ pub fn collapse(app: &AppHandle) {
     if let Ok(guard) = ANIMATOR.lock() {
         if let Some(animator) = guard.0 {
             unsafe {
+                // Duration parameter is passed but overridden by Swift constants
+                // matching Boring Notch animation timing
                 let duration: f64 = 0.22;
                 let app_ptr = app as *const _ as *mut std::ffi::c_void;
                 let _: () = msg_send![animator, collapseWithDuration:duration appHandle:app_ptr];
