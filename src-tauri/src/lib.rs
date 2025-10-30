@@ -11,6 +11,8 @@ use objc2_app_kit::{NSEvent, NSEventMask, NSScreen};
 use objc2_foundation::MainThreadMarker; // for NSScreen::screens(mtm)
 use objc2_foundation::NSPoint;
 #[cfg(target_os = "macos")]
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
+#[cfg(target_os = "macos")]
 use std::{
     ptr::NonNull,
     sync::{
@@ -413,9 +415,32 @@ fn get_media_artwork() -> Option<String> {
         .ok()?;
 
     if output.status.success() {
-        let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !result.is_empty() && result != "missing value" {
-            return Some(result);
+        let stdout = output.stdout;
+        if stdout.is_empty() {
+            return None;
+        }
+
+        match std::str::from_utf8(&stdout) {
+            Ok(text) => {
+                let trimmed = text.trim();
+                if trimmed.starts_with("http") && !trimmed.is_empty() && trimmed != "missing value" {
+                    return Some(trimmed.to_string());
+                }
+                return None;
+            }
+            Err(_) => {
+                let data = if stdout.last() == Some(&b'\n') {
+                    &stdout[..stdout.len().saturating_sub(1)]
+                } else {
+                    &stdout[..]
+                };
+                if !data.is_empty() {
+                    let encoded = BASE64_STANDARD.encode(data);
+                    if !encoded.is_empty() {
+                        return Some(format!("data:image/png;base64,{}", encoded));
+                    }
+                }
+            }
         }
     }
 
@@ -701,8 +726,11 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
     let global_handler: &'static Block<dyn Fn(NonNull<NSEvent>)> =
         Box::leak(Box::new(RcBlock::new(global_closure)));
     let mouse_moved = NSEventMask::from_bits_truncate(1 << 6); // mouseMoved
-    let _global =
-        NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mouse_moved, global_handler);
+    if let Some(monitor) = unsafe {
+        NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mouse_moved, global_handler)
+    } {
+        std::mem::forget(monitor);
+    }
 
     // --- Local monitor: events targeted at YOUR app (fires when you ARE key) ---
     let st_local = st.clone();
@@ -714,9 +742,11 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
     };
     let local_handler: &'static Block<dyn Fn(NonNull<NSEvent>) -> *mut NSEvent> =
         Box::leak(Box::new(RcBlock::new(local_closure)));
-    let _local = unsafe {
-        NSEvent::addLocalMonitorForEventsMatchingMask_handler(mouse_moved, local_handler)
-    };
+    if let Some(monitor) =
+        unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mouse_moved, local_handler) }
+    {
+        std::mem::forget(monitor);
+    }
 
     // --- Poller: periodic fallback in case event monitors are blocked (e.g. missing accessibility permission) ---
     let st_poll = st.clone();

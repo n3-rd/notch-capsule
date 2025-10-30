@@ -467,9 +467,6 @@
 			hasPendingOpen = false;
 			capsuleFadingOut = false;
 			showCapsuleContent = true;
-			if (notchExpanded) {
-				await updateCapsuleFocus(true);
-			}
 			return;
 		}
 
@@ -492,9 +489,11 @@
 		// Use native animator if available (macOS), otherwise fallback to window resize
 		if (nativeAnimatorAttached) {
 			// Native animation - just call the command, no window resizing
+			// Don't call updateCapsuleFocus - keep window non-activating for hover to work
 			try {
 				await invoke('notch_expand');
-				// Content will be shown when native animation completes (notch-native-anim-end event)
+				// Show content immediately since native animation handles the mask
+				showCapsuleContent = true;
 			} catch (err) {
 				console.warn('Native expand error:', err);
 				// Fallback to showing content immediately
@@ -548,12 +547,15 @@
 			// Use native animator if available (macOS), otherwise fallback to window resize
 			if (nativeAnimatorAttached) {
 				// Native animation - just call the command, no window resizing
+				// Don't call updateCapsuleFocus - keep window non-activating for hover to work
 				try {
 					await invoke('notch_collapse');
 					// Content will be shown when native animation completes (notch-native-anim-end event)
 				} catch (err) {
 					console.warn('Native collapse error:', err);
 					// Fallback
+					capsuleRenderKey++;
+					await tick();
 					showCapsuleContent = true;
 				}
 			} else {
@@ -734,7 +736,10 @@
 				if (isNewTrack || !capsuleArtwork) {
 					lastCapsuleTrackId = currentTrackId;
 					const artwork = await invoke<string | null>('get_media_artwork');
-					if (artwork && artwork.startsWith('http')) {
+					if (
+						artwork &&
+						(artwork.startsWith('http') || artwork.startsWith('data:image'))
+					) {
 						capsuleArtwork = artwork;
 					} else {
 						capsuleArtwork = null;
@@ -755,7 +760,20 @@
 		}
 	}
 
+	async function ensureAccessibilityPermissions() {
+		try {
+			const trusted = await invoke<boolean>('ensure_accessibility', { prompt: false });
+			if (!trusted) {
+				await invoke<boolean>('ensure_accessibility', { prompt: true });
+			}
+		} catch (error) {
+			console.warn('Accessibility permission check failed:', error);
+		}
+	}
+
 	onMount(async () => {
+		void ensureAccessibilityPermissions();
+
 		const win = (await TauriWindow.getByLabel('notch-capsule')) ?? getCurrentWindow();
 		windowInstance = win;
 
@@ -815,16 +833,14 @@
 		unlistenNative = await listen<{ phase: string }>('notch-native-anim-end', ({ payload }) => {
 			console.log('Native animation ended:', payload.phase);
 			if (payload.phase === 'expand') {
-				// Animation complete, show content
+				// Animation complete, ensure content is visible
 				showCapsuleContent = true;
-				void updateCapsuleFocus(true);
 			} else if (payload.phase === 'collapse') {
 				// Animation complete, re-render capsule and show content
 				capsuleRenderKey++;
 				tick().then(() => {
 					showCapsuleContent = true;
 				});
-				void updateCapsuleFocus(false);
 			}
 		});
 

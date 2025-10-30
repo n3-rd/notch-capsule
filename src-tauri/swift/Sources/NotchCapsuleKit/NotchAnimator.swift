@@ -88,8 +88,12 @@ import QuartzCore
     private func notifyEnd(phase: NotchPhase, after: CFTimeInterval, appHandle: UnsafeMutableRawPointer?) {
         guard let appHandle = appHandle else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + after) {
-            // Bridge to Tauri via C wrapper; Rust will emit the event.
-            _notch_notify_anim_end(appHandle, phase.rawValue)
+            // Call the Rust function directly via dlsym
+            if let rustCallback = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_notch_notify_anim_end") {
+                typealias CallbackType = @convention(c) (UnsafeMutableRawPointer, Int32) -> Void
+                let callback = unsafeBitCast(rustCallback, to: CallbackType.self)
+                callback(appHandle, Int32(phase.rawValue))
+            }
         }
     }
 }
@@ -103,9 +107,4 @@ final class HitTestView: NSView {
         let inPath = path.contains(p)
         return inPath ? super.hitTest(point) : nil
     }
-}
-
-@_cdecl("_notch_notify_anim_end")
-public func _notch_notify_anim_end(_ appHandle: UnsafeMutableRawPointer, _ phase: Int) {
-    // Symbol stub; real implementation lives on Rust side via dlsym or direct linking.
 }
