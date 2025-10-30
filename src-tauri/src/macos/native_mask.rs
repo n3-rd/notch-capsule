@@ -31,6 +31,33 @@ pub fn attach_animator(
             None => return 
         };
         
+        // Explicitly load the Swift framework dylib
+        use std::ffi::CString;
+        
+        // Try multiple paths to find the dylib
+        let paths = vec![
+            "@executable_path/libNotchCapsuleKit.dylib",
+            "@executable_path/../../../target/debug/libNotchCapsuleKit.dylib",
+            "@executable_path/../../../target/release/libNotchCapsuleKit.dylib",
+            "libNotchCapsuleKit.dylib", // Will search in standard locations
+        ];
+        
+        let mut loaded = false;
+        for path_str in paths {
+            if let Ok(dylib_path) = CString::new(path_str) {
+                let handle = libc::dlopen(dylib_path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL);
+                if !handle.is_null() {
+                    eprintln!("Successfully loaded Swift dylib from: {}", path_str);
+                    loaded = true;
+                    break;
+                }
+            }
+        }
+        
+        if !loaded {
+            eprintln!("Warning: Could not explicitly load Swift dylib, relying on linker");
+        }
+        
         // Load NotchAnimator class from the Swift framework
         let cls = class!(NotchAnimator);
         
