@@ -136,6 +136,10 @@ fn elevate_to_status_bar(win: &tauri::WebviewWindow) -> tauri::Result<()> {
     let mut mask = ns_win.styleMask();
     mask.insert(NSWindowStyleMask::NonactivatingPanel); // non-activating panel
     ns_win.setStyleMask(mask);
+    
+    // Ensure window is visible and properly ordered without activating
+    ns_win.orderFrontRegardless();
+    
     Ok(())
 }
 
