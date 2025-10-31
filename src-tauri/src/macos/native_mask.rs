@@ -93,7 +93,46 @@ pub fn attach_animator(
         }
         
         // Load NotchAnimator class from the Swift framework
-        let cls = class!(NotchAnimator);
+        // Use NSClassFromString to find the Swift class from the loaded dylib
+        use cocoa::foundation::NSString;
+        let class_name = NSString::alloc(nil).init_str("NotchCapsuleKit.NotchAnimator");
+        let cls: id = msg_send![class![NSClassFromString], performSelector:sel!(classFromString:) withObject:class_name];
+        
+        if cls == nil {
+            // Try without module prefix
+            let class_name = NSString::alloc(nil).init_str("NotchAnimator");
+            let cls_result: id = msg_send![class![NSClassFromString], performSelector:sel!(classFromString:) withObject:class_name];
+            if cls_result == nil {
+                eprintln!("Failed to find NotchAnimator class");
+                return;
+            }
+        }
+        
+        // Use objc_getClass as a more direct approach
+        extern "C" {
+            fn objc_getClass(name: *const c_char) -> id;
+        }
+        
+        let class_names = vec![
+            "NotchCapsuleKit.NotchAnimator\0",
+            "NotchAnimator\0",
+            "_TtC15NotchCapsuleKit13NotchAnimator\0", // Mangled Swift name
+        ];
+        
+        let mut cls: id = nil;
+        for name in &class_names {
+            let c_name = CString::new(&name[..name.len()-1]).unwrap();
+            cls = objc_getClass(c_name.as_ptr());
+            if cls != nil {
+                eprintln!("Found class with name: {}", &name[..name.len()-1]);
+                break;
+            }
+        }
+        
+        if cls == nil {
+            eprintln!("Failed to find NotchAnimator class after trying multiple names");
+            return;
+        }
         
         let animator: id = msg_send![cls, new];
         if animator == nil {
