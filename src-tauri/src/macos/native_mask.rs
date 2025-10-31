@@ -66,7 +66,7 @@ pub fn attach_animator(
         }
         
         let mut loaded = false;
-        for path in paths {
+        for path in &paths {
             if path.exists() {
                 if let Some(path_str) = path.to_str() {
                     if let Ok(dylib_path) = CString::new(path_str) {
