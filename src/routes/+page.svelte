@@ -37,6 +37,14 @@
 	const MEDIA_POLL_ACTIVE_MS = 1200;
 	const MEDIA_POLL_IDLE_MS = 4000;
 
+	// Hover timing constants matching Boring Notch behavior - adjusted for fluid motion
+	const MIN_HOVER_DURATION = 250; // ms - slightly faster response
+	const LEAVE_DEBOUNCE = 150; // ms - longer debounce for smoother feel
+
+	// Hover scheduling state
+	let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null;
+	let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// Track if native mask animator is attached (macOS only)
 	let nativeAnimatorAttached = $state(false);
 
@@ -45,11 +53,11 @@
 	let capsuleAnime: JSAnimation | null = null;
 	let capsuleHoverAnime: JSAnimation | null = null;
 
-	// Animation duration constants for synchronization
-	const EXPAND_IN_DURATION = 320;
-	const EXPAND_OUT_DURATION = 220;
-	const CAPSULE_IN_DURATION = 240;
-	const CAPSULE_OUT_DURATION = 120;
+	// Animation duration constants for synchronization - more fluid motion
+	const EXPAND_IN_DURATION = 420;  // Slower, more graceful
+	const EXPAND_OUT_DURATION = 280;
+	const CAPSULE_IN_DURATION = 320;
+	const CAPSULE_OUT_DURATION = 160;
 
 	function animateExpandIn(node: HTMLElement) {
 		if (expandedAnime) {
@@ -67,12 +75,12 @@
 		// Small delay to ensure styles are applied
 		requestAnimationFrame(() => {
 			expandedAnime = animate(node, {
-				scale: [0.92, 1],
-				translateY: ['-2px', '0px'],
+				scale: [0.94, 1],
+				translateY: ['-1px', '0px'],
 				opacity: [0, 1],
 				duration: EXPAND_IN_DURATION,
 				delay: 0,
-				ease: 'spring(1, 90, 10, 0)',
+				ease: 'spring(1, 80, 12, 0)', // Softer, more fluid spring
 				composition: 'replace',
 				complete: () => {
 					// Clear will-change after animation completes
@@ -94,13 +102,14 @@
 		requestAnimationFrame(() => {
 			const currentOpacity = parseFloat(window.getComputedStyle(node).opacity) || 1;
 
+			// Reverse of expand in animation - smoother collapse
 			expandedAnime = animate(node, {
-				scale: [1, 0.92],
-				translateY: ['0px', '-4px'],
+				scale: [1, 0.94],
+				translateY: ['0px', '-1px'],
 				opacity: [currentOpacity, 0],
 				duration: EXPAND_OUT_DURATION,
 				delay: 0,
-				ease: 'in(2.5)',
+				ease: 'out(3)', // Gentler easing for fluid collapse
 				composition: 'replace',
 				complete: () => {
 					// Clear will-change after animation completes
@@ -380,12 +389,47 @@
 	}
 
 	function cancelScheduledOpen() {
+		if (hoverOpenTimer) {
+			clearTimeout(hoverOpenTimer);
+			hoverOpenTimer = null;
+		}
 		if (hasPendingOpen) {
 			hasPendingOpen = false;
 			capsuleFadingOut = false;
 			showCapsuleContent = true;
 		}
 		openIntentToken++;
+	}
+
+	function cancelScheduledClose() {
+		if (hoverCloseTimer) {
+			clearTimeout(hoverCloseTimer);
+			hoverCloseTimer = null;
+		}
+	}
+
+	function scheduleOpenOnHover() {
+		if (DEV_KEEP_NOTCH_EXPANDED) return;
+
+		cancelScheduledOpen();
+		hoverOpenTimer = setTimeout(() => {
+			hoverOpenTimer = null;
+			if (manualHold && !notchExpanded) {
+				void openNotch();
+			}
+		}, MIN_HOVER_DURATION);
+	}
+
+	function scheduleCloseOnLeave() {
+		if (DEV_KEEP_NOTCH_EXPANDED) return;
+
+		cancelScheduledClose();
+		hoverCloseTimer = setTimeout(() => {
+			hoverCloseTimer = null;
+			if (!manualHold && !pointerInExpanded) {
+				void closeNotch();
+			}
+		}, LEAVE_DEBOUNCE);
 	}
 
 	async function updateCapsuleFocus(focused: boolean) {
@@ -472,43 +516,63 @@
 
 		const token = ++openIntentToken;
 		hasPendingOpen = true;
-		showCapsuleContent = false;
-		capsuleFadingOut = true;
 
-		await wait(150);
+		const contentWasVisible = showCapsuleContent;
+
+		if (contentWasVisible) {
+			capsuleFadingOut = true;
+		}
+
+		if (capsuleEl) {
+			animateCapsuleOut(capsuleEl);
+		}
+
+		if (contentWasVisible || capsuleEl) {
+			await wait(CAPSULE_OUT_DURATION);
+		}
 
 		if (token !== openIntentToken || notchExpanded) {
 			hasPendingOpen = false;
+			capsuleFadingOut = false;
 			return;
 		}
 
+		if (nativeAnimatorAttached) {
+			// Native animation - keep content visible while mask handles transition
+			if (windowInstance) {
+				await windowInstance.setResizable(true);
+				await windowInstance.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_HEIGHT));
+				await moveWindow(Position.TopCenter);
+			}
+
+			hasPendingOpen = false;
+			notchExpanded = true;
+			capsuleFadingOut = false;
+
+			try {
+				await invoke('notch_expand');
+				showCapsuleContent = true;
+			} catch (err) {
+				console.warn('Native expand error:', err);
+				showCapsuleContent = true;
+			}
+
+			return;
+		}
+
+		// Fallback path: hide content after fade and animate window resize
+		showCapsuleContent = false;
 		hasPendingOpen = false;
 		notchExpanded = true;
 		capsuleFadingOut = false;
 
-		// Use native animator if available (macOS), otherwise fallback to window resize
-		if (nativeAnimatorAttached) {
-			// Native animation - just call the command, no window resizing
-			// Don't call updateCapsuleFocus - keep window non-activating for hover to work
-			try {
-				await invoke('notch_expand');
-				// Show content immediately since native animation handles the mask
-				showCapsuleContent = true;
-			} catch (err) {
-				console.warn('Native expand error:', err);
-				// Fallback to showing content immediately
-				showCapsuleContent = true;
-			}
-		} else {
-			// Fallback: Fire-and-forget window resize - don't block DOM animation
-			resizeWindow(true)
-				.then(() => updateCapsuleFocus(true))
-				.catch((err) => console.warn('Window resize error:', err))
-				.finally(() => syncNativeExpanded(true));
+		resizeWindow(true)
+			.then(() => updateCapsuleFocus(true))
+			.catch((err) => console.warn('Window resize error:', err))
+			.finally(() => syncNativeExpanded(true));
 
-			// DOM animation starts immediately without waiting for native resize
-			await tick();
-		}
+		// DOM animation starts immediately without waiting for native resize
+		await tick();
 	}
 
 	async function closeNotch() {
@@ -546,10 +610,22 @@
 
 			// Use native animator if available (macOS), otherwise fallback to window resize
 			if (nativeAnimatorAttached) {
-				// Native animation - just call the command, no window resizing
+				// Native animation - animate the mask, then resize window
 				// Don't call updateCapsuleFocus - keep window non-activating for hover to work
 				try {
+					// Start mask collapse animation
 					await invoke('notch_collapse');
+					
+					// Wait for animation to complete, then resize window
+					await wait(300); // Match collapse duration
+					
+					// Resize window back to capsule size
+					const targetWidth = capsuleMedia?.is_playing ? notchWidth : notchWidthNormal;
+					if (windowInstance) {
+						await windowInstance.setSize(new LogicalSize(targetWidth, notchHeight));
+						await moveWindow(Position.TopCenter);
+					}
+					
 					// Content will be shown when native animation completes (notch-native-anim-end event)
 				} catch (err) {
 					console.warn('Native collapse error:', err);
@@ -736,10 +812,7 @@
 				if (isNewTrack || !capsuleArtwork) {
 					lastCapsuleTrackId = currentTrackId;
 					const artwork = await invoke<string | null>('get_media_artwork');
-					if (
-						artwork &&
-						(artwork.startsWith('http') || artwork.startsWith('data:image'))
-					) {
+					if (artwork && (artwork.startsWith('http') || artwork.startsWith('data:image'))) {
 						capsuleArtwork = artwork;
 					} else {
 						capsuleArtwork = null;
@@ -803,12 +876,10 @@
 			await win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_HEIGHT));
 			await moveWindow(Position.TopCenter);
 			syncNativeExpanded(true);
-			await updateCapsuleFocus(true);
 		} else {
 			await win.setSize(new LogicalSize(notchWidth, notchHeight));
 			await moveWindow(Position.TopCenter);
 			syncNativeExpanded(false);
-			await updateCapsuleFocus(false);
 		}
 
 		// Try to attach native mask animator (macOS only)
@@ -847,17 +918,20 @@
 		// Listen for native hover (works even when window not focused)
 		unlisten = await listen<{ inside: boolean }>('notch-hover', ({ payload }) => {
 			const inside = !!payload?.inside;
+			console.log('Native hover event:', inside);
 			if (inside) {
+				// Native hover detected - schedule open with debounce
+				console.log('Scheduling open on hover');
+				manualHold = true;
+				pointerInExpanded = false;
+				scheduleOpenOnHover();
+			} else if (!DEV_KEEP_NOTCH_EXPANDED) {
+				// Native hover exit - schedule close with debounce
+				console.log('Scheduling close on leave');
 				manualHold = false;
 				pointerInExpanded = false;
-				void openNotch();
-			} else if (!DEV_KEEP_NOTCH_EXPANDED) {
 				cancelScheduledOpen();
-				requestAnimationFrame(() => {
-					if (!(manualHold || pointerInExpanded)) {
-						void closeNotch();
-					}
-				});
+				scheduleCloseOnLeave();
 			}
 		});
 
@@ -870,6 +944,8 @@
 		if (unlisten) unlisten();
 		if (unlistenNative) unlistenNative();
 		clearMediaPoll();
+		cancelScheduledOpen();
+		cancelScheduledClose();
 		window.removeEventListener('pointermove', updatePointerState);
 		window.removeEventListener('pointerleave', handlePointerLeave);
 		if (cancelWindowResize) {
@@ -911,15 +987,18 @@
 			bind:this={expandedEl}
 			style={`--notch-mask:${notchMaskUri};`}
 			onmouseenter={() => {
+				if (DEV_KEEP_NOTCH_EXPANDED) return;
 				manualHold = true;
 				pointerInExpanded = true;
+				cancelScheduledClose();
 				void openNotch();
 			}}
 			onmouseleave={() => {
+				if (DEV_KEEP_NOTCH_EXPANDED) return;
 				manualHold = false;
 				pointerInExpanded = false;
 				cancelScheduledOpen();
-				void closeNotch();
+				scheduleCloseOnLeave();
 			}}
 		>
 			<NotchExpanded />
@@ -931,41 +1010,41 @@
 				class="capsule rounded-tab"
 				bind:this={capsuleEl}
 				style={`width:${toPx(capsuleMedia?.is_playing ? notchWidth : notchWidthNormal)}; height:${toPx(notchHeight)}; --notch-mask:${notchMaskUri};`}
-				onpointerenter={(e) => {
+				onpointerenter={() => {
+					if (DEV_KEEP_NOTCH_EXPANDED) return;
 					manualHold = true;
 					if (capsuleEl) animateCapsuleHoverIn(capsuleEl);
-					void openNotch();
+					scheduleOpenOnHover();
 				}}
 				onpointerleave={() => {
+					if (DEV_KEEP_NOTCH_EXPANDED) return;
 					manualHold = false;
 					pointerInExpanded = false;
 					if (capsuleEl) animateCapsuleHoverOut(capsuleEl);
 					cancelScheduledOpen();
-					if (!DEV_KEEP_NOTCH_EXPANDED) {
-						void closeNotch();
-					}
+					scheduleCloseOnLeave();
 				}}
 			>
-				{#if capsuleMedia?.is_playing}
-					{#if showCapsuleContent}
-						<div class="capsule-content" class:morphing-out={capsuleFadingOut}>
-							<!-- Artwork on the left -->
-							<div class="capsule-artwork slide-in-left">
-								{#if capsuleArtwork}
-									<img src={capsuleArtwork} alt={capsuleMedia.title} class="artwork-image" />
-								{:else}
-									<div class="artwork-placeholder">🎵</div>
-								{/if}
-							</div>
-
-							<!-- Waveform on the right -->
-							<div class="capsule-letter slide-in-right">
-								<Waveform color={capsuleWaveColor} />
-							</div>
+				{#if showCapsuleContent}
+					<div class="capsule-content" class:morphing-out={capsuleFadingOut}>
+						<!-- Artwork on the left -->
+						<div class="capsule-artwork">
+							{#if capsuleArtwork}
+								<img src={capsuleArtwork} alt={capsuleMedia?.title ?? 'Capsule artwork'} class="artwork-image" />
+							{:else}
+								<div class="artwork-placeholder">🎵</div>
+							{/if}
 						</div>
-					{/if}
-				{:else if showCapsuleContent}
-					<span class="label no-drag" class:morphing-out={capsuleFadingOut}>Notch Capsule</span>
+
+						<!-- Waveform or label on the right -->
+						<div class="capsule-main" class:showing-label={!capsuleMedia?.is_playing}>
+							{#if capsuleMedia?.is_playing}
+								<Waveform color={capsuleWaveColor} />
+							{:else}
+								<span class="label no-drag" class:morphing-out={capsuleFadingOut}>Notch Capsule</span>
+							{/if}
+						</div>
+					</div>
 				{/if}
 			</div>
 		{/key}
@@ -1150,6 +1229,7 @@
 		width: 100%;
 		height: 100%;
 		padding: 0 2px;
+		gap: 8px;
 		pointer-events: none;
 		opacity: 1;
 		transform: scale(1);
@@ -1165,14 +1245,16 @@
 		transform: scale(0.96);
 	}
 
-	/* Capsule artwork on the left */
+	/* Capsule artwork on the left - minimal design */
 	.capsule-artwork {
-		width: 22px;
-		height: 22px;
-		border-radius: 5px;
+		width: 20px;
+		height: 20px;
+		border-radius: 4px;
 		overflow: hidden;
-		background: rgba(255, 255, 255, 0.05);
+		background: rgba(255, 255, 255, 0.03);
 		flex-shrink: 0;
+		opacity: 0.9;
+		transition: opacity 0.2s ease;
 	}
 
 	.artwork-image {
@@ -1187,23 +1269,37 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 11px;
-		opacity: 0.3;
+		font-size: 10px;
+		opacity: 0.25;
 	}
 
-	/* Waveform container on the right */
-	.capsule-letter {
-		width: 24px;
-		height: 24px;
+	/* Waveform container / label on the right */
+	.capsule-main {
+		flex: 1;
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		justify-content: flex-end;
 		user-select: none;
-		flex-shrink: 0;
+		flex-shrink: 1;
+		min-width: 0;
+		opacity: 1;
+	}
+
+	.capsule-main.showing-label {
+		justify-content: flex-start;
+		padding-left: 4px;
+	}
+
+	.capsule-main .label {
+		white-space: nowrap;
+	}
+
+	.capsule-main .label::selection {
+		background: transparent;
 	}
 
 	/* Make waveform smaller to fit in capsule */
-	.capsule-letter :global(#wave) {
+	.capsule-main :global(#wave) {
 		width: 20px !important;
 		height: 16px !important;
 	}
@@ -1211,12 +1307,13 @@
 	/* Sliding animations with bounce */
 	.slide-in-left {
 		animation: slideInLeft 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+		animation-fill-mode: forwards;
 	}
 
 	.slide-in-right {
 		animation: slideInRight 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
 		animation-delay: 0.08s;
-		animation-fill-mode: both;
+		animation-fill-mode: forwards;
 	}
 
 	@keyframes slideInLeft {

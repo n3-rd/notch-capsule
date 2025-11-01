@@ -1,11 +1,13 @@
 # Native Swift Mask Animator Implementation - Summary
 
 ## Overview
+
 Successfully implemented native-driven notch expand/collapse animation using Swift CAShapeLayer mask animator for macOS, eliminating jank by moving animation to the GPU layer while keeping the Svelte frontend for UI content.
 
 ## What Was Implemented
 
 ### 1. Swift Animation Engine
+
 **Location**: `src-tauri/swift/Sources/NotchCapsuleKit/NotchAnimator.swift`
 
 - **NotchAnimator class**: Core animation logic using CAShapeLayer mask
@@ -22,6 +24,7 @@ Successfully implemented native-driven notch expand/collapse animation using Swi
 - **Timing**: Cubic bezier (0.2, 0.9, 0.2, 1.0) for smooth, native-feeling animation
 
 ### 2. Rust Bindings
+
 **Location**: `src-tauri/src/macos/native_mask.rs`, `src-tauri/src/macos/mod.rs`
 
 - Objective-C bridge using `cocoa` and `objc` crates
@@ -35,15 +38,18 @@ Successfully implemented native-driven notch expand/collapse animation using Swi
 - Emits `notch-native-anim-end` Tauri event with phase information
 
 ### 3. Tauri Commands
+
 **Location**: `src-tauri/src/lib.rs`
 
 New async commands registered:
+
 - `notch_attach`: Attaches animator to window with dimensions
 - `notch_expand`: Triggers native expand animation
 - `notch_collapse`: Triggers native collapse animation
 - `notch_set_progress`: Sets animation progress (0.0 to 1.0)
 
 ### 4. Frontend Integration
+
 **Location**: `src/routes/+page.svelte`
 
 - **On mount**: Invokes `notch_attach` with window dimensions
@@ -55,6 +61,7 @@ New async commands registered:
 - **Content visibility**: Syncs with native animation completion
 
 ### 5. Build Configuration
+
 **Location**: `src-tauri/build.rs`
 
 - Detects macOS platform
@@ -62,6 +69,7 @@ New async commands registered:
 - Links resulting dylib for Rust to load
 
 ### 6. Package Management
+
 **Location**: `src-tauri/swift/Package.swift`
 
 - Swift Package Manager manifest
@@ -109,13 +117,16 @@ New async commands registered:
 ## Testing Status
 
 ### Automated Checks ✅
+
 - TypeScript/Svelte check: 0 errors, 0 warnings
 - Code formatting: Applied via Prettier
 - Code review: No issues found
 - Linting: All checks passed
 
 ### Manual Testing ⏳
+
 Requires macOS environment:
+
 1. Build and run: `npm run tauri dev`
 2. Verify smooth GPU-accelerated animations
 3. Check content visibility syncs with animation
@@ -125,6 +136,7 @@ Requires macOS environment:
 ## Files Changed
 
 ### New Files
+
 - `src-tauri/src/macos/mod.rs` - Module declaration
 - `src-tauri/src/macos/native_mask.rs` - Rust bindings (3466 bytes)
 - `src-tauri/swift/Package.swift` - Swift package manifest
@@ -132,6 +144,7 @@ Requires macOS environment:
 - `IMPLEMENTATION_NOTES.md` - Architecture documentation
 
 ### Modified Files
+
 - `src-tauri/Cargo.toml` - Added cocoa, objc dependencies
 - `src-tauri/build.rs` - Added Swift compilation step
 - `src-tauri/src/lib.rs` - Added commands and module import
@@ -155,11 +168,13 @@ Note: The `report_progress` tool automatically managed branch naming. The implem
 5. ⏳ Ready for PR creation and merge
 
 ## PR Title (as requested)
+
 "Native-driven notch expand/collapse using Swift mask animator (keep Svelte UI)"
 
 ## Summary
 
 This implementation successfully delivers on all requirements:
+
 - ✅ Swift CAShapeLayer mask animation
 - ✅ Rust Tauri command bindings
 - ✅ Frontend integration with event-driven architecture
