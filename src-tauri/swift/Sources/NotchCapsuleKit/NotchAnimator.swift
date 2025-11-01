@@ -14,12 +14,12 @@ import QuartzCore
     private var expandedRect: CGRect = .zero
     private var corner: CGFloat = 12
     
-    // Animation timing matching Boring Notch feel
+    // Animation timing matching Boring Notch feel - more fluid and motion-like
     // Reference: https://github.com/TheBoredTeam/boring.notch
-    private let expandDuration: CFTimeInterval = 0.40  // Spring/bouncy feel for expand
-    private let collapseDuration: CFTimeInterval = 0.30 // Smooth feel for collapse
-    private let expandTimingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.2, 1.0) // Bouncy
-    private let collapseTimingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0) // Smooth
+    private let expandDuration: CFTimeInterval = 0.50  // Slower, more fluid spring feel
+    private let collapseDuration: CFTimeInterval = 0.35 // Smooth, gentle collapse
+    private let expandTimingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0) // Fluid spring
+    private let collapseTimingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1.0) // Smooth ease out
 
     @objc public func attach(to window: NSWindow, closedRect: CGRect, expandedRect: CGRect, corner: CGFloat) {
         self.window = window

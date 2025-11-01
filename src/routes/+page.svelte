@@ -37,9 +37,9 @@
 	const MEDIA_POLL_ACTIVE_MS = 1200;
 	const MEDIA_POLL_IDLE_MS = 4000;
 
-	// Hover timing constants matching Boring Notch behavior
-	const MIN_HOVER_DURATION = 300; // ms - delay before opening on hover
-	const LEAVE_DEBOUNCE = 100; // ms - debounce before closing on leave
+	// Hover timing constants matching Boring Notch behavior - adjusted for fluid motion
+	const MIN_HOVER_DURATION = 250; // ms - slightly faster response
+	const LEAVE_DEBOUNCE = 150; // ms - longer debounce for smoother feel
 
 	// Hover scheduling state
 	let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null;
@@ -53,11 +53,11 @@
 	let capsuleAnime: JSAnimation | null = null;
 	let capsuleHoverAnime: JSAnimation | null = null;
 
-	// Animation duration constants for synchronization
-	const EXPAND_IN_DURATION = 320;
-	const EXPAND_OUT_DURATION = 220;
-	const CAPSULE_IN_DURATION = 240;
-	const CAPSULE_OUT_DURATION = 120;
+	// Animation duration constants for synchronization - more fluid motion
+	const EXPAND_IN_DURATION = 420;  // Slower, more graceful
+	const EXPAND_OUT_DURATION = 280;
+	const CAPSULE_IN_DURATION = 320;
+	const CAPSULE_OUT_DURATION = 160;
 
 	function animateExpandIn(node: HTMLElement) {
 		if (expandedAnime) {
@@ -75,12 +75,12 @@
 		// Small delay to ensure styles are applied
 		requestAnimationFrame(() => {
 			expandedAnime = animate(node, {
-				scale: [0.92, 1],
-				translateY: ['-2px', '0px'],
+				scale: [0.94, 1],
+				translateY: ['-1px', '0px'],
 				opacity: [0, 1],
 				duration: EXPAND_IN_DURATION,
 				delay: 0,
-				ease: 'spring(1, 90, 10, 0)',
+				ease: 'spring(1, 80, 12, 0)', // Softer, more fluid spring
 				composition: 'replace',
 				complete: () => {
 					// Clear will-change after animation completes
@@ -102,14 +102,14 @@
 		requestAnimationFrame(() => {
 			const currentOpacity = parseFloat(window.getComputedStyle(node).opacity) || 1;
 
-			// Reverse of expand in animation
+			// Reverse of expand in animation - smoother collapse
 			expandedAnime = animate(node, {
-				scale: [1, 0.92],
-				translateY: ['0px', '-2px'],
+				scale: [1, 0.94],
+				translateY: ['0px', '-1px'],
 				opacity: [currentOpacity, 0],
 				duration: EXPAND_OUT_DURATION,
 				delay: 0,
-				ease: 'out(2.5)', // Reverse of spring easing
+				ease: 'out(3)', // Gentler easing for fluid collapse
 				composition: 'replace',
 				complete: () => {
 					// Clear will-change after animation completes
@@ -1245,15 +1245,16 @@
 		transform: scale(0.96);
 	}
 
-	/* Capsule artwork on the left */
+	/* Capsule artwork on the left - minimal design */
 	.capsule-artwork {
-		width: 22px;
-		height: 22px;
-		border-radius: 5px;
+		width: 20px;
+		height: 20px;
+		border-radius: 4px;
 		overflow: hidden;
-		background: rgba(255, 255, 255, 0.05);
+		background: rgba(255, 255, 255, 0.03);
 		flex-shrink: 0;
-		opacity: 1; /* Ensure visible */
+		opacity: 0.9;
+		transition: opacity 0.2s ease;
 	}
 
 	.artwork-image {
@@ -1268,8 +1269,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 11px;
-		opacity: 0.3;
+		font-size: 10px;
+		opacity: 0.25;
 	}
 
 	/* Waveform container / label on the right */
