@@ -47,7 +47,9 @@ fn main() {
                 println!("cargo:rustc-link-lib=dylib=NotchCapsuleKit");
                 
                 // Set rpath for the binary to find the dylib
+                // @executable_path for dev, @executable_path/../Resources for bundled app
                 println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+                println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Resources/target/release");
             }
             Ok(s) => {
                 println!("cargo:warning=Swift build failed with status: {:?}", s);

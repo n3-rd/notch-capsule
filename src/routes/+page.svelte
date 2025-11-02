@@ -556,6 +556,8 @@
 			try {
 				await invoke('notch_expand');
 				showCapsuleContent = true;
+				// Focus the window so it's interactive immediately without extra click
+				await updateCapsuleFocus(true);
 			} catch (err) {
 				console.warn('Native expand error:', err);
 				showCapsuleContent = true;

@@ -57,11 +57,12 @@ struct ConfigValue<T: Codable>: Codable {
     private var corner: CGFloat = 12
     
     // Animation timing from config - defaults matching Boring Notch feel
-    private var expandDuration: CFTimeInterval = 0.50
-    private var collapseDuration: CFTimeInterval = 0.35
+    private var expandDuration: CFTimeInterval = 0.4
+    private var collapseDuration: CFTimeInterval = 0.3
     private var expandTimingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0)
     private var collapseTimingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1.0)
     private var windowLevelOffset: Int = 3
+    private var useSpringAnimation: Bool = true
 
     @objc public func attach(to window: NSWindow, closedRect: CGRect, expandedRect: CGRect, corner: CGFloat) {
         self.window = window
@@ -79,15 +80,26 @@ struct ConfigValue<T: Codable>: Codable {
         if contentView.layer == nil { 
             contentView.layer = CALayer() 
         }
+        
+        // Ensure layer is ready for masking
+        guard let layer = contentView.layer else { return }
 
+        // Configure mask layer with proper defaults
         maskLayer.fillColor = NSColor.black.cgColor
-        contentView.layer?.mask = maskLayer
+        maskLayer.fillRule = .evenOdd
+        maskLayer.frame = layer.bounds
+        layer.mask = maskLayer
 
         hitView.frame = contentView.bounds
         hitView.autoresizingMask = [.width, .height]
         contentView.addSubview(hitView, positioned: .above, relativeTo: nil)
 
+        // Force initial layout
+        contentView.layoutSubtreeIfNeeded()
         updatePath(progress: 0) // closed
+        
+        // Ensure changes are committed
+        CATransaction.flush()
     }
     
     @objc public func setConfigJson(_ jsonCString: UnsafePointer<CChar>) {
@@ -168,12 +180,26 @@ struct ConfigValue<T: Codable>: Codable {
 
     @objc public func expand(duration: CFTimeInterval, appHandle: UnsafeMutableRawPointer?) {
         animate(to: 1.0, duration: expandDuration, timingFunction: expandTimingFunction)
-        notifyEnd(phase: .expand, after: expandDuration, appHandle: appHandle)
+        // Use actual animation duration for spring animation
+        let actualDuration: CFTimeInterval
+        if #available(macOS 14.0, *), useSpringAnimation {
+            actualDuration = 0.5 // Spring settling time
+        } else {
+            actualDuration = expandDuration
+        }
+        notifyEnd(phase: .expand, after: actualDuration, appHandle: appHandle)
     }
 
     @objc public func collapse(duration: CFTimeInterval, appHandle: UnsafeMutableRawPointer?) {
         animate(to: 0.0, duration: collapseDuration, timingFunction: collapseTimingFunction)
-        notifyEnd(phase: .collapse, after: collapseDuration, appHandle: appHandle)
+        // Use actual animation duration for spring animation
+        let actualDuration: CFTimeInterval
+        if #available(macOS 14.0, *), useSpringAnimation {
+            actualDuration = 0.35 // Spring settling time
+        } else {
+            actualDuration = collapseDuration
+        }
+        notifyEnd(phase: .collapse, after: actualDuration, appHandle: appHandle)
     }
 
     @objc public func setProgress(_ p: CGFloat) { 
@@ -187,14 +213,34 @@ struct ConfigValue<T: Codable>: Codable {
         let fromPath = maskLayer.path
         updatePath(progress: target)
         let toPath = maskLayer.path
+        
+        // Remove any existing animations to prevent conflicts
+        maskLayer.removeAllAnimations()
         maskLayer.path = toPath
 
-        let anim = CABasicAnimation(keyPath: "path")
-        anim.fromValue = fromPath
-        anim.toValue = toPath
-        anim.duration = duration
-        anim.timingFunction = timingFunction
-        maskLayer.add(anim, forKey: "path")
+        if #available(macOS 14.0, *), useSpringAnimation {
+            // Use spring animation for smoother, more natural feel
+            let anim = CASpringAnimation(keyPath: "path")
+            anim.fromValue = fromPath
+            anim.toValue = toPath
+            anim.mass = 1.0
+            anim.stiffness = 300.0
+            anim.damping = 30.0
+            anim.duration = anim.settlingDuration
+            anim.fillMode = .forwards
+            anim.isRemovedOnCompletion = false
+            maskLayer.add(anim, forKey: "path")
+        } else {
+            // Fallback to timing function for older macOS
+            let anim = CABasicAnimation(keyPath: "path")
+            anim.fromValue = fromPath
+            anim.toValue = toPath
+            anim.duration = duration
+            anim.timingFunction = timingFunction
+            anim.fillMode = .forwards
+            anim.isRemovedOnCompletion = false
+            maskLayer.add(anim, forKey: "path")
+        }
     }
 
     private func updatePath(progress: CGFloat) {

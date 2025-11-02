@@ -768,7 +768,43 @@ fn get_notch_config() -> config::NotchConfig {
     config::NotchConfig::get().clone()
 }
 
-// Native mask animation commands
+// Swift-based notch manager commands
+#[tauri::command]
+async fn init_swift_notch(
+    app: tauri::AppHandle,
+    closed_w: f64,
+    closed_h: f64,
+    expanded_w: f64,
+    expanded_h: f64,
+    corner: f64,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::swift_bridge::init_notch_manager(&app, closed_w, closed_h, expanded_w, expanded_h, corner)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+async fn notch_force_expand() {
+    #[cfg(target_os = "macos")]
+    {
+        macos::swift_bridge::force_expand();
+    }
+}
+
+#[tauri::command]
+async fn notch_force_collapse() {
+    #[cfg(target_os = "macos")]
+    {
+        macos::swift_bridge::force_collapse();
+    }
+}
+
+// Legacy commands kept for backward compatibility (now using swift_bridge)
 #[tauri::command]
 async fn notch_attach(
     window: tauri::Window,
@@ -825,6 +861,9 @@ pub fn run() {
             media_next_track,
             media_previous_track,
             media_seek,
+            init_swift_notch,
+            notch_force_expand,
+            notch_force_collapse,
             notch_attach,
             notch_expand,
             notch_collapse,
@@ -847,6 +886,7 @@ pub fn run() {
             }
             Ok(())
         })
+        .enable_macos_default_menu(false)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
