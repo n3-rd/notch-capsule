@@ -1,0 +1,80 @@
+{
+  "_comment": "Notch Capsule Configuration - Universal config used by Rust, Swift, and JavaScript. Edit values to customize animation timing, sizes, and behavior. See CONFIG_README.md for details.",
+  "animation": {
+    "expand_duration": {
+      "value": 3.50,
+      "description": "Duration in seconds for the expand animation - slower gives more fluid spring feel"
+    },
+    "collapse_duration": {
+      "value": 0.35,
+      "description": "Duration in seconds for the collapse animation - smooth and gentle"
+    },
+    "expand_timing": {
+      "value": [0.16, 1.0, 0.3, 1.0],
+      "description": "Cubic bezier control points for expand animation (fluid spring curve)"
+    },
+    "collapse_timing": {
+      "value": [0.25, 0.1, 0.25, 1.0],
+      "description": "Cubic bezier control points for collapse animation (smooth ease out)"
+    }
+  },
+  "dimensions": {
+    "corner_radius": {
+      "value": 12,
+      "description": "Corner radius in points for the notch capsule rounded corners"
+    },
+    "collapsed_width": {
+      "value": 460.0,
+      "description": "Width in points when the notch is collapsed (matches notch size)"
+    },
+    "collapsed_height": {
+      "value": 50.0,
+      "description": "Height in points when the notch is collapsed"
+    },
+    "expanded_width": {
+      "value": 700.0,
+      "description": "Width in points when the notch is fully expanded"
+    },
+    "expanded_height": {
+      "value": 200.0,
+      "description": "Height in points when the notch is fully expanded"
+    }
+  },
+  "hover": {
+    "collapsed_zone_width": {
+      "value": 460.0,
+      "description": "Width in points of the hover detection zone when collapsed"
+    },
+    "collapsed_zone_height": {
+      "value": 50.0,
+      "description": "Height in points of the hover detection zone when collapsed"
+    },
+    "expanded_zone_width": {
+      "value": 700.0,
+      "description": "Width in points of the hover detection zone when expanded"
+    },
+    "expanded_zone_height": {
+      "value": 200.0,
+      "description": "Height in points of the hover detection zone when expanded"
+    },
+    "expand_delay_ms": {
+      "value": 250,
+      "description": "Milliseconds to wait before expanding when hovering over the notch area"
+    },
+    "collapse_delay_ms": {
+      "value": 150,
+      "description": "Milliseconds to wait before collapsing when leaving the hover area"
+    },
+    "poll_interval_ms": {
+      "value": 50,
+      "description": "How often in milliseconds to check mouse position (polling fallback)"
+    }
+  },
+  "window": {
+    "level_offset": {
+      "value": 3,
+      "description": "How many levels above main menu to place the window (higher = more on top)"
+    }
+  }
+}
+

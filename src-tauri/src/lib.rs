@@ -3,6 +3,8 @@
 #[allow(unused_imports)]
 mod macos;
 
+mod config;
+
 #[cfg(all(desktop, target_os = "macos"))]
 use tauri::Manager;
 
@@ -136,6 +138,10 @@ fn elevate_to_status_bar(win: &tauri::WebviewWindow) -> tauri::Result<()> {
     let mut mask = ns_win.styleMask();
     mask.insert(NSWindowStyleMask::NonactivatingPanel); // non-activating panel
     ns_win.setStyleMask(mask);
+    
+    // Ensure window is visible and properly ordered without activating
+    ns_win.orderFrontRegardless();
+    
     Ok(())
 }
 
@@ -658,24 +664,14 @@ fn handle_mouse_move<F>(
     };
 
     let mut lock = st.lock().unwrap();
-    let (was_inside, ts) = *lock;
+    let (was_inside, _ts) = *lock;
     let now = Instant::now();
-    let open_delay = Duration::from_millis(40);
-    let close_delay = Duration::from_millis(120);
 
-    let mut changed = None;
-    if inside && !was_inside && now.duration_since(ts) >= open_delay {
-        *lock = (true, now);
-        changed = Some(true);
-    } else if !inside && was_inside && now.duration_since(ts) >= close_delay {
-        *lock = (false, now);
-        changed = Some(false);
-    } else if inside != was_inside {
-        *lock = (was_inside, now); // not enough time yet
-    }
-
-    if let Some(v) = changed {
-        let _ = app_handle.emit("notch-hover", serde_json::json!({ "inside": v }));
+    // Emit immediately on state change; debouncing is handled in Svelte
+    if inside != was_inside {
+        *lock = (inside, now);
+        eprintln!("Mouse hover state changed: inside={}", inside);
+        let _ = app_handle.emit("notch-hover", serde_json::json!({ "inside": inside }));
     }
 }
 
@@ -705,10 +701,11 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
         let f = frame?;
         // tune these to your capsule size
         let expanded = expanded_flag_for_zone.load(Ordering::Relaxed);
+        let cfg = config::NotchConfig::get();
         let (zone_w, zone_h) = if expanded {
-            (700.0, 200.0)
+            (cfg.hover.expanded_zone_width.value, cfg.hover.expanded_zone_height.value)
         } else {
-            (460.0, 50.0) // Wider hover zone to match expanded capsule
+            (cfg.hover.collapsed_zone_width.value, cfg.hover.collapsed_zone_height.value)
         };
         let x = f.origin.x + (f.size.width - zone_w) * 0.5;
         let y = f.origin.y + f.size.height - zone_h;
@@ -742,18 +739,20 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
     };
     let local_handler: &'static Block<dyn Fn(NonNull<NSEvent>) -> *mut NSEvent> =
         Box::leak(Box::new(RcBlock::new(local_closure)));
-    if let Some(monitor) =
-        unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mouse_moved, local_handler) }
-    {
+    if let Some(monitor) = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(mouse_moved, local_handler)
+    } {
         std::mem::forget(monitor);
     }
 
     // --- Poller: periodic fallback in case event monitors are blocked (e.g. missing accessibility permission) ---
+    // This poller is the primary hover detection mechanism and runs continuously
     let st_poll = st.clone();
     let app_handle_poll = app.clone();
     let hover_zone_poll = hover_zone.clone();
+    let poll_interval = config::NotchConfig::get().hover.poll_interval_ms.value;
     thread::spawn(move || loop {
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(poll_interval));
         let st_for_call = st_poll.clone();
         let hover_zone_for_call = hover_zone_poll.clone();
         let app_for_call = app_handle_poll.clone();
@@ -763,7 +762,49 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
     });
 }
 
-// Native mask animation commands
+// Get config values
+#[tauri::command]
+fn get_notch_config() -> config::NotchConfig {
+    config::NotchConfig::get().clone()
+}
+
+// Swift-based notch manager commands
+#[tauri::command]
+async fn init_swift_notch(
+    app: tauri::AppHandle,
+    closed_w: f64,
+    closed_h: f64,
+    expanded_w: f64,
+    expanded_h: f64,
+    corner: f64,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::swift_bridge::init_notch_manager(&app, closed_w, closed_h, expanded_w, expanded_h, corner)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+async fn notch_force_expand() {
+    #[cfg(target_os = "macos")]
+    {
+        macos::swift_bridge::force_expand();
+    }
+}
+
+#[tauri::command]
+async fn notch_force_collapse() {
+    #[cfg(target_os = "macos")]
+    {
+        macos::swift_bridge::force_collapse();
+    }
+}
+
+// Legacy commands kept for backward compatibility (now using swift_bridge)
 #[tauri::command]
 async fn notch_attach(
     window: tauri::Window,
@@ -810,6 +851,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_notch_dimensions,
+            get_notch_config,
             ensure_accessibility,
             set_notch_expanded,
             set_capsule_focus,
@@ -819,6 +861,9 @@ pub fn run() {
             media_next_track,
             media_previous_track,
             media_seek,
+            init_swift_notch,
+            notch_force_expand,
+            notch_force_collapse,
             notch_attach,
             notch_expand,
             notch_collapse,
@@ -841,6 +886,7 @@ pub fn run() {
             }
             Ok(())
         })
+        .enable_macos_default_menu(false)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
