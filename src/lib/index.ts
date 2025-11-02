@@ -1,5 +1,8 @@
-export const notchExpandedWidth = 700;
-export const notchExpandedHeight = 200;
+import { getConfig } from './config';
+
+// These are loaded from config at runtime, but provide defaults for static imports
+export const notchExpandedWidth = getConfig().dimensions.expanded_width.value;
+export const notchExpandedHeight = getConfig().dimensions.expanded_height.value;
 
 // Global dev variable to keep notch expanded during development
 export const DEV_KEEP_NOTCH_EXPANDED = false;

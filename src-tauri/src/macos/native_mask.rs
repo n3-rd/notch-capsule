@@ -6,6 +6,7 @@ use objc::{msg_send, sel, sel_impl, class};
 use tauri::{AppHandle, Emitter, Manager, Window};
 use std::sync::Mutex;
 use std::os::raw::{c_char, c_int, c_void};
+use crate::config;
 
 // Wrapper to make id Send-safe (safe because we only access on main thread)
 struct SendId(Option<id>);
@@ -185,6 +186,38 @@ pub fn attach_animator(
             
             if let Ok(mut guard) = ANIMATOR.lock() {
                 guard.0 = Some(animator);
+            }
+            
+            // Send config to Swift via JSON string - wrapped to catch any exceptions
+            let cfg = config::NotchConfig::get();
+            if let Ok(config_json) = serde_json::to_string(cfg) {
+                if let Ok(config_cstr) = std::ffi::CString::new(config_json) {
+                    // Check if selector exists before calling
+                    extern "C" {
+                        fn sel_registerName(str: *const c_char) -> objc::runtime::Sel;
+                        fn class_respondsToSelector(cls: id, sel: objc::runtime::Sel) -> bool;
+                    }
+                    
+                    let set_config_sel = sel_registerName(b"setConfigJson:\0".as_ptr() as *const c_char);
+                    let animator_class: id = msg_send![animator, class];
+                    
+                    if class_respondsToSelector(animator_class, set_config_sel) {
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let _: () = msg_send![animator, setConfigJson:config_cstr.as_ptr()];
+                        }));
+                        
+                        match result {
+                            Ok(_) => eprintln!("Successfully sent config to Swift animator"),
+                            Err(_) => eprintln!("Error sending config to Swift animator, using defaults"),
+                        }
+                    } else {
+                        eprintln!("Swift animator doesn't have setConfigJson method, using defaults");
+                    }
+                } else {
+                    eprintln!("Failed to create C string from config JSON");
+                }
+            } else {
+                eprintln!("Failed to serialize config to JSON");
             }
         }
     });

@@ -8,6 +8,7 @@
 	import NotchExpanded from '$lib/notch-expanded.svelte';
 	import { notchExpandedHeight, notchExpandedWidth, DEV_KEEP_NOTCH_EXPANDED } from '$lib';
 	import Waveform from '$lib/components/music/waveform.svelte';
+	import { loadConfig, getConfig } from '$lib/config';
 
 	// Media info for capsule display
 	interface MediaInfo {
@@ -38,8 +39,9 @@
 	const MEDIA_POLL_IDLE_MS = 4000;
 
 	// Hover timing constants matching Boring Notch behavior - adjusted for fluid motion
-	const MIN_HOVER_DURATION = 250; // ms - slightly faster response
-	const LEAVE_DEBOUNCE = 150; // ms - longer debounce for smoother feel
+	// These are loaded from config but fallback to defaults if config not loaded yet
+	let MIN_HOVER_DURATION = 250; // ms - slightly faster response
+	let LEAVE_DEBOUNCE = 150; // ms - longer debounce for smoother feel
 
 	// Hover scheduling state
 	let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null;
@@ -271,8 +273,10 @@
 		}
 	});
 
-	const EXPANDED_WIDTH = notchExpandedWidth;
-	const EXPANDED_HEIGHT = notchExpandedHeight;
+	// Load from config - these will be set on mount
+	let EXPANDED_WIDTH = notchExpandedWidth;
+	let EXPANDED_HEIGHT = notchExpandedHeight;
+	let CORNER_RADIUS = 12;
 
 	function syncNativeExpanded(expanded: boolean) {
 		invoke('set_notch_expanded', { expanded }).catch(() => {});
@@ -845,6 +849,14 @@
 	}
 
 	onMount(async () => {
+		// Load config first
+		const config = await loadConfig();
+		EXPANDED_WIDTH = config.dimensions.expanded_width.value;
+		EXPANDED_HEIGHT = config.dimensions.expanded_height.value;
+		CORNER_RADIUS = config.dimensions.corner_radius.value;
+		MIN_HOVER_DURATION = config.hover.expand_delay_ms.value;
+		LEAVE_DEBOUNCE = config.hover.collapse_delay_ms.value;
+		
 		void ensureAccessibilityPermissions();
 
 		const win = (await TauriWindow.getByLabel('notch-capsule')) ?? getCurrentWindow();
@@ -891,7 +903,7 @@
 				closedH: notchHeight,
 				expandedW: EXPANDED_WIDTH,
 				expandedH: EXPANDED_HEIGHT,
-				corner: 14
+				corner: CORNER_RADIUS
 			});
 			nativeAnimatorAttached = true;
 			console.log('Native mask animator attached');

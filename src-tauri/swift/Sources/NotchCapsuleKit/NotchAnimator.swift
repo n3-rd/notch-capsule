@@ -6,6 +6,48 @@ import QuartzCore
     case collapse 
 }
 
+// Config structures matching the JSON config file
+struct NotchConfig: Codable {
+    let animation: AnimationConfig
+    let dimensions: DimensionsConfig
+    let hover: HoverConfig
+    let window: WindowConfig
+}
+
+struct AnimationConfig: Codable {
+    let expand_duration: ConfigValue<Double>
+    let collapse_duration: ConfigValue<Double>
+    let expand_timing: ConfigValue<[Double]>
+    let collapse_timing: ConfigValue<[Double]>
+}
+
+struct DimensionsConfig: Codable {
+    let corner_radius: ConfigValue<Double>
+    let collapsed_width: ConfigValue<Double>
+    let collapsed_height: ConfigValue<Double>
+    let expanded_width: ConfigValue<Double>
+    let expanded_height: ConfigValue<Double>
+}
+
+struct HoverConfig: Codable {
+    let collapsed_zone_width: ConfigValue<Double>
+    let collapsed_zone_height: ConfigValue<Double>
+    let expanded_zone_width: ConfigValue<Double>
+    let expanded_zone_height: ConfigValue<Double>
+    let expand_delay_ms: ConfigValue<Int>
+    let collapse_delay_ms: ConfigValue<Int>
+    let poll_interval_ms: ConfigValue<Int>
+}
+
+struct WindowConfig: Codable {
+    let level_offset: ConfigValue<Int>
+}
+
+struct ConfigValue<T: Codable>: Codable {
+    let value: T
+    let description: String
+}
+
 @objc public class NotchAnimator: NSObject {
     private weak var window: NSWindow?
     private let maskLayer = CAShapeLayer()
@@ -14,12 +56,12 @@ import QuartzCore
     private var expandedRect: CGRect = .zero
     private var corner: CGFloat = 12
     
-    // Animation timing matching Boring Notch feel - more fluid and motion-like
-    // Reference: https://github.com/TheBoredTeam/boring.notch
-    private let expandDuration: CFTimeInterval = 0.50  // Slower, more fluid spring feel
-    private let collapseDuration: CFTimeInterval = 0.35 // Smooth, gentle collapse
-    private let expandTimingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0) // Fluid spring
-    private let collapseTimingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1.0) // Smooth ease out
+    // Animation timing from config - defaults matching Boring Notch feel
+    private var expandDuration: CFTimeInterval = 0.50
+    private var collapseDuration: CFTimeInterval = 0.35
+    private var expandTimingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0)
+    private var collapseTimingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1.0)
+    private var windowLevelOffset: Int = 3
 
     @objc public func attach(to window: NSWindow, closedRect: CGRect, expandedRect: CGRect, corner: CGFloat) {
         self.window = window
@@ -29,7 +71,7 @@ import QuartzCore
 
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.level = .init(NSWindow.Level.mainMenu.rawValue + 3)
+        window.level = .init(NSWindow.Level.mainMenu.rawValue + windowLevelOffset)
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
         guard let contentView = window.contentView else { return }
@@ -46,6 +88,82 @@ import QuartzCore
         contentView.addSubview(hitView, positioned: .above, relativeTo: nil)
 
         updatePath(progress: 0) // closed
+    }
+    
+    @objc public func setConfigJson(_ jsonCString: UnsafePointer<CChar>) {
+        guard let jsonString = String(utf8String: jsonCString) else {
+            print("Failed to convert C string to Swift String")
+            return
+        }
+        
+        guard let jsonData = jsonString.data(using: .utf8) else {
+            print("Failed to convert string to UTF-8 data")
+            return
+        }
+        
+        do {
+            let decoder = JSONDecoder()
+            let config = try decoder.decode(NotchConfig.self, from: jsonData)
+            
+            // Apply animation config
+            expandDuration = config.animation.expand_duration.value
+            collapseDuration = config.animation.collapse_duration.value
+            
+            // Apply timing functions from control points
+            let expandPoints = config.animation.expand_timing.value
+            if expandPoints.count == 4 {
+                expandTimingFunction = CAMediaTimingFunction(
+                    controlPoints: Float(expandPoints[0]),
+                    Float(expandPoints[1]),
+                    Float(expandPoints[2]),
+                    Float(expandPoints[3])
+                )
+            }
+            
+            let collapsePoints = config.animation.collapse_timing.value
+            if collapsePoints.count == 4 {
+                collapseTimingFunction = CAMediaTimingFunction(
+                    controlPoints: Float(collapsePoints[0]),
+                    Float(collapsePoints[1]),
+                    Float(collapsePoints[2]),
+                    Float(collapsePoints[3])
+                )
+            }
+            
+            // Apply dimensions config
+            corner = config.dimensions.corner_radius.value
+            
+            // Apply window level config
+            windowLevelOffset = config.window.level_offset.value
+            if let win = window {
+                win.level = .init(NSWindow.Level.mainMenu.rawValue + windowLevelOffset)
+            }
+            
+            // Refresh path with new corner radius if we have a current progress
+            if maskLayer.path != nil {
+                // Get current progress - if collapsed it's 0, if expanded it's 1
+                let currentProgress: CGFloat = (closedRect.width == expandedRect.width) ? 0 : 1
+                updatePath(progress: currentProgress)
+            }
+            
+            print("✓ Successfully loaded animation config from JSON")
+        } catch {
+            print("✗ Failed to decode config JSON: \(error)")
+            if let decodingError = error as? DecodingError {
+                switch decodingError {
+                case .dataCorrupted(let context):
+                    print("  Data corrupted: \(context)")
+                case .keyNotFound(let key, let context):
+                    print("  Key '\(key)' not found: \(context)")
+                case .typeMismatch(let type, let context):
+                    print("  Type mismatch for \(type): \(context)")
+                case .valueNotFound(let type, let context):
+                    print("  Value not found for \(type): \(context)")
+                @unknown default:
+                    print("  Unknown decoding error")
+                }
+            }
+        }
     }
 
     @objc public func expand(duration: CFTimeInterval, appHandle: UnsafeMutableRawPointer?) {

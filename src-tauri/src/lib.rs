@@ -3,6 +3,8 @@
 #[allow(unused_imports)]
 mod macos;
 
+mod config;
+
 #[cfg(all(desktop, target_os = "macos"))]
 use tauri::Manager;
 
@@ -699,10 +701,11 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
         let f = frame?;
         // tune these to your capsule size
         let expanded = expanded_flag_for_zone.load(Ordering::Relaxed);
+        let cfg = config::NotchConfig::get();
         let (zone_w, zone_h) = if expanded {
-            (700.0, 200.0)
+            (cfg.hover.expanded_zone_width.value, cfg.hover.expanded_zone_height.value)
         } else {
-            (460.0, 50.0) // Wider hover zone to match expanded capsule
+            (cfg.hover.collapsed_zone_width.value, cfg.hover.collapsed_zone_height.value)
         };
         let x = f.origin.x + (f.size.width - zone_w) * 0.5;
         let y = f.origin.y + f.size.height - zone_h;
@@ -736,9 +739,9 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
     };
     let local_handler: &'static Block<dyn Fn(NonNull<NSEvent>) -> *mut NSEvent> =
         Box::leak(Box::new(RcBlock::new(local_closure)));
-    if let Some(monitor) =
-        unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mouse_moved, local_handler) }
-    {
+    if let Some(monitor) = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(mouse_moved, local_handler)
+    } {
         std::mem::forget(monitor);
     }
 
@@ -747,8 +750,9 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
     let st_poll = st.clone();
     let app_handle_poll = app.clone();
     let hover_zone_poll = hover_zone.clone();
+    let poll_interval = config::NotchConfig::get().hover.poll_interval_ms.value;
     thread::spawn(move || loop {
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(poll_interval));
         let st_for_call = st_poll.clone();
         let hover_zone_for_call = hover_zone_poll.clone();
         let app_for_call = app_handle_poll.clone();
@@ -756,6 +760,12 @@ fn start_hover_monitors(app: &tauri::AppHandle, expanded_flag: Arc<AtomicBool>) 
             handle_mouse_move(&st_for_call, &app_for_call, &*hover_zone_for_call);
         });
     });
+}
+
+// Get config values
+#[tauri::command]
+fn get_notch_config() -> config::NotchConfig {
+    config::NotchConfig::get().clone()
 }
 
 // Native mask animation commands
@@ -805,6 +815,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_notch_dimensions,
+            get_notch_config,
             ensure_accessibility,
             set_notch_expanded,
             set_capsule_focus,
